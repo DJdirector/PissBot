@@ -7,7 +7,7 @@ Commands exist in a server only when their module is enabled (core commands are 
 | Command | Who | Description |
 | --- | --- | --- |
 | `/ping` | everyone | Check the bot responds |
-| `/bot_status` | everyone | Uptime and number of tracked YouTube channels (private) |
+| `/bot_status` | everyone | Uptime, tracked YouTube channels, and whether the bot can post in each configured channel (private) |
 | `/setup` | Setup wizard permission | Choose modules and set channels. See [Setup and Modules](Setup-and-Modules) |
 | `/permissions` | administrators only | Choose which roles can use each feature. See [Permissions](Permissions) |
 

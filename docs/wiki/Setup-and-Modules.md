@@ -19,7 +19,7 @@ Run `/setup` (administrators, or roles you allowed under the `setup` permission)
 3. **XP leaderboard channel** (only if Levels and XP is on). Pick where the live leaderboard lives. The bot posts an explanation of how XP works there.
 4. **Done.** A summary lists the enabled modules and their commands.
 
-Each channel step has a **Skip this step** button. Run `/setup` again at any time to change modules or channels.
+Each channel step has a **Skip this step** button. If the bot cannot post in the channel you pick (a permission override is blocking it), the wizard warns you straight away and says what to allow. Run `/setup` again at any time to change modules or channels.
 
 ## Modules
 

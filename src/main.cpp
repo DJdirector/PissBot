@@ -90,7 +90,7 @@ void grant_xp(dpp::cluster &bot, Database &db, uint64_t guild_id,
                                            "> reached **level " +
                                            std::to_string(new_level) + "**!");
     msg.set_allowed_mentions(true, false, false, false);
-    bot.message_create(msg);
+    send_message_logged(bot, msg, "a level-up announcement");
   }
 }
 
@@ -653,7 +653,7 @@ int main() {
         dpp::message reply(event.msg.channel_id, render_template(response, tc));
         // Only user mentions resolve, so $(query) can't ping roles/@everyone.
         reply.set_allowed_mentions(true, false, false, false);
-        bot.message_create(reply);
+        send_message_logged(bot, reply, "a custom command reply");
         return;
       }
     }
@@ -669,7 +669,7 @@ int main() {
           dpp::message reply(event.msg.channel_id,
                              render_template(hit->response, tc));
           reply.set_allowed_mentions(true, false, false, false);
-          bot.message_create(reply);
+          send_message_logged(bot, reply, "an answer");
         }
       }
     }
@@ -792,6 +792,11 @@ int main() {
               .add_field("Tracked Channels", std::to_string(subs.size()), true)
               .set_footer(dpp::embed_footer().set_text(
                   "System Active • SQLite Normal"));
+
+      std::string access =
+          channel_access_report(bot, db, event.command.guild_id);
+      if (!access.empty())
+        embed.add_field("Channel access", access, false);
 
       event.reply(dpp::message(event.command.channel_id, embed)
                       .set_flags(dpp::m_ephemeral));
@@ -1055,7 +1060,7 @@ int main() {
         return;
       dpp::snowflake channel_id = std::stoull(event.values[0]);
       db.set_notification_channel(event.command.guild_id, channel_id);
-      bot.message_create(dpp::message(
+      send_message_logged(bot, dpp::message(
           channel_id,
           "👋 **PissBot will post notifications here.**\n"
           "How to get started:\n"
@@ -1063,28 +1068,36 @@ int main() {
           "and paste a channel ID (starts with `UC`).\n"
           "2. Then pick a ping role, edit the message text, and toggle "
           "Shorts/embeds right in the dashboard.\n"
-          "3. `/youtube_preview` lets you test a message template."));
-      event.reply(dpp::ir_update_message,
-                  setup_step_message(db, event.command.guild_id,
-                                     next_setup_step(db, event.command.guild_id,
-                                                     "notify")));
+          "3. `/youtube_preview` lets you test a message template."),
+          "the setup guide");
+      dpp::message next = setup_step_message(
+          db, event.command.guild_id,
+          next_setup_step(db, event.command.guild_id, "notify"));
+      std::string warn = channel_warning(bot, event.command.guild_id, channel_id);
+      if (!warn.empty())
+        next.set_content(warn + "\n\n" + next.content);
+      event.reply(dpp::ir_update_message, next);
     } else if (event.custom_id == "select_xp_leaderboard_channel") {
       if (event.values.empty())
         return;
       dpp::snowflake channel_id = std::stoull(event.values[0]);
       db.set_xp_leaderboard_channel(event.command.guild_id, channel_id);
-      bot.message_create(dpp::message(
+      send_message_logged(bot, dpp::message(
           channel_id,
           "🏆 **Live XP leaderboard channel.**\n"
           "The leaderboard below refreshes every 5 minutes.\n"
           "• Chatting earns 15 XP (once per minute)\n"
           "• Time in voice earns 10 XP per minute\n"
           "• `/rank` shows your level and rank, `/xp_top` shows the top 10\n"
-          "• Admins can reward levels with `/levelrole`"));
-      event.reply(dpp::ir_update_message,
-                  setup_step_message(db, event.command.guild_id,
-                                     next_setup_step(db, event.command.guild_id,
-                                                     "leaderboard")));
+          "• Admins can reward levels with `/levelrole`"),
+          "the leaderboard guide");
+      dpp::message next = setup_step_message(
+          db, event.command.guild_id,
+          next_setup_step(db, event.command.guild_id, "leaderboard"));
+      std::string warn = channel_warning(bot, event.command.guild_id, channel_id);
+      if (!warn.empty())
+        next.set_content(warn + "\n\n" + next.content);
+      event.reply(dpp::ir_update_message, next);
     } else if (event.custom_id == "ans_pick") {
       if (event.values.empty())
         return;
@@ -1606,10 +1619,12 @@ int main() {
 
                             dpp::message msg(notify_channel_id, final_msg);
                             msg.add_embed(embed);
-                            bot.message_create(msg);
+                            send_message_logged(bot, msg,
+                                                "a YouTube notification");
                           } else {
-                            bot.message_create(
-                                dpp::message(notify_channel_id, final_msg));
+                            send_message_logged(
+                                bot, dpp::message(notify_channel_id, final_msg),
+                                "a YouTube notification");
                           }
                         });
                   }
@@ -1651,28 +1666,43 @@ int main() {
                   msg, [&bot, &db, lb_guild_id, lb_channel_id,
                         embed](const dpp::confirmation_callback_t &cb) {
                     if (cb.is_error()) {
+                      int code = cb.get_error().code;
+                      if (code == 50013 || code == 50001) {
+                        // A permissions problem: creating a new message
+                        // would fail the same way, so just explain it.
+                        log_send_failure(bot, lb_channel_id,
+                                         "the XP leaderboard", cb);
+                        return;
+                      }
                       bot.message_create(
                           dpp::message(lb_channel_id, embed),
-                          [&db,
-                           lb_guild_id](const dpp::confirmation_callback_t &new_cb) {
-                            if (!new_cb.is_error()) {
-                              auto created_msg =
-                                  std::get<dpp::message>(new_cb.value);
-                              db.set_last_leaderboard_message_id(
-                                  lb_guild_id, created_msg.id);
+                          [&bot, &db, lb_guild_id,
+                           lb_channel_id](const dpp::confirmation_callback_t &new_cb) {
+                            if (new_cb.is_error()) {
+                              log_send_failure(bot, lb_channel_id,
+                                               "the XP leaderboard", new_cb);
+                              return;
                             }
+                            auto created_msg =
+                                std::get<dpp::message>(new_cb.value);
+                            db.set_last_leaderboard_message_id(lb_guild_id,
+                                                               created_msg.id);
                           });
                     }
                   });
             } else {
               bot.message_create(
                   dpp::message(lb_channel_id, embed),
-                  [&db, lb_guild_id](const dpp::confirmation_callback_t &cb) {
-                    if (!cb.is_error()) {
-                      auto created_msg = std::get<dpp::message>(cb.value);
-                      db.set_last_leaderboard_message_id(lb_guild_id,
-                                                         created_msg.id);
+                  [&bot, &db, lb_guild_id,
+                   lb_channel_id](const dpp::confirmation_callback_t &cb) {
+                    if (cb.is_error()) {
+                      log_send_failure(bot, lb_channel_id, "the XP leaderboard",
+                                       cb);
+                      return;
                     }
+                    auto created_msg = std::get<dpp::message>(cb.value);
+                    db.set_last_leaderboard_message_id(lb_guild_id,
+                                                       created_msg.id);
                   });
             }
           }

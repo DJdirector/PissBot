@@ -99,7 +99,7 @@ void send_to_channel(Ctx &ctx, uint64_t channel, const std::string &text) {
     return;
   dpp::message m(channel, text);
   m.set_allowed_mentions(true, false, false, false);
-  ctx.bot.message_create(m);
+  send_message_logged(ctx.bot, m, "a welcome message");
 }
 
 class WelcomeModule : public Module {
@@ -130,8 +130,11 @@ public:
     uint64_t guild = event.command.guild_id;
     if (event.custom_id == "wel_channel" && !event.values.empty()) {
       ctx.db.kv_set(guild, "welcome_channel", event.values[0]);
+      std::string warn =
+          channel_warning(ctx.bot, guild, std::stoull(event.values[0]));
       event.reply(dpp::ir_update_message,
-                  welcome_view(ctx.db, guild, "✅ Channel saved."));
+                  welcome_view(ctx.db, guild,
+                               warn.empty() ? "✅ Channel saved." : warn));
       return true;
     }
     if (event.custom_id == "wel_autorole" && !event.values.empty()) {

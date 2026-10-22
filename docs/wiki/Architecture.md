@@ -129,6 +129,7 @@ Tests are small programs that exit non-zero on failure (`CHECK(...)` in `tests/c
 | `template_test` | unit | The `$(...)` engine, maths, escapes, limits, validation |
 | `database_test` | unit | Every database operation, SQL injection strings, and the migration of old `{placeholder}` messages |
 | `answers_test` | unit | Answer matching rules and cooldowns |
+| `access_test` | full | The channel permission check behind "Missing Permissions" warnings, using a fake guild in the D++ cache |
 | `commands_test` | full | Every slash command definition against Discord's rules (name format, length limits, required options first, no duplicates, 100 command cap) |
 
 ```bash

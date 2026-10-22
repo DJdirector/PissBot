@@ -34,7 +34,7 @@ void log_action(Ctx &ctx, uint64_t guild_id, const std::string &action,
                      .add_field("Moderator", "<@" + std::to_string(mod) + ">", true)
                      .add_field("Reason", reason)
                      .set_timestamp(time(nullptr));
-  ctx.bot.message_create(dpp::message(std::stoull(ch), e));
+  send_message_logged(ctx.bot, dpp::message(std::stoull(ch), e), "a mod log entry");
 }
 
 // Best effort: users with closed DMs are simply skipped.
@@ -142,8 +142,10 @@ public:
     if (cmd == "modlog") {
       auto ch = std::get<dpp::snowflake>(event.get_parameter("channel"));
       ctx.db.kv_set(guild, "modlog_channel", std::to_string(uint64_t(ch)));
+      std::string warn = channel_warning(ctx.bot, guild, uint64_t(ch));
       event.reply(ephemeral_text("Mod actions will be logged in <#" +
-                                 std::to_string(uint64_t(ch)) + ">."));
+                                 std::to_string(uint64_t(ch)) + ">." +
+                                 (warn.empty() ? "" : "\n\n" + warn)));
       return true;
     }
 

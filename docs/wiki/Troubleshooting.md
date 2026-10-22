@@ -20,6 +20,24 @@
 
 The member's role has not been granted that feature. An administrator can grant it in `/permissions`. Remember a feature with no roles assigned is administrators only.
 
+## "Missing Permissions" (error 50013) in some channels
+
+The log shows `Error: 50013: Missing Permissions`, and the bot works in some channels but not in others (for example the notification or leaderboard channel you created for it).
+
+Cause: a **channel or category permission override** is blocking the bot, even though its server-wide role is fine. This is common with channels made for the bot, private channels, and channels in a category that denies Send Messages to `@everyone`.
+
+How to check:
+
+- Run `/bot_status`. The **Channel access** field lists the notification, leaderboard, welcome and mod log channels and says exactly what the bot is missing in each (or "could not check" if Discord has not told the bot about its own member yet).
+- Setup also warns you right after you pick a channel that the bot cannot use.
+- The bot log now names the channel and the missing permissions, for example `Could not send a YouTube notification in channel 123...: Missing Permissions (error 50013)... Missing right now: Send Messages`. Repeats for the same channel are hidden for 30 minutes.
+
+How to fix: open the channel (and its category), go to **Edit Channel > Permissions**, add the bot's role (or the bot itself) and allow **View Channel, Send Messages, Embed Links and Read Message History**. It works on the next attempt; nothing needs to be re-selected.
+
+Also check **Embed Links**: the leaderboard and rich YouTube posts are embeds, so a channel can accept plain messages from the bot and still reject these.
+
+`/purge` has its own requirement: **Manage Messages** in that channel. Log lines mentioning `bulk-delete` come from it.
+
 ## Roles are not being given
 
 Applies to level rewards, autorole and role menus.
