@@ -1,0 +1,25 @@
+# Build output
+build/
+cmake-build-*/
+
+# Local data and secrets: never commit these
+bot_data.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+
+# Editor and tooling caches
+.cache/
+compile_commands.json
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

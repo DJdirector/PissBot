@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APT_PACKAGES: cmake ninja-build pkg-config libssl-dev zlib1g-dev libsqlite3-dev libopus-dev
+
+jobs:
+  # Fast feedback: template engine, database and answer matching.
+  # Builds only the tests that do not need D++, so it finishes in about a minute.
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build unit tests
+        run: cmake --build build --target template_test database_test answers_test
+
+      - name: Run unit tests
+        run: ctest --test-dir build -L unit --output-on-failure
+
+  # Compiles the whole bot (including D++) and runs every test, so a change
+  # that breaks the build or a command definition is caught before merging.
+  build:
+    name: Full build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+
+      - name: Cache compiler output
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Run all tests
+        run: ctest --test-dir build --output-on-failure
