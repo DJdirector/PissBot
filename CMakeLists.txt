@@ -5,6 +5,20 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(PISSBOT_BUILD_TESTS "Build the unit tests (run them with ctest)" ON)
+option(PISSBOT_STATIC
+       "Produce a fully static executable with no runtime dependencies (build on Alpine/musl, see scripts/build-static.sh)"
+       OFF)
+
+if(PISSBOT_STATIC)
+    # D++ as a static library, without voice (drops libopus; the bot only uses
+    # voice-state events, not voice connections), and prefer .a files for
+    # SQLite, zlib and OpenSSL so everything is linked into the executable.
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_VOICE_SUPPORT OFF CACHE BOOL "" FORCE)
+    set(DPP_INSTALL OFF CACHE BOOL "" FORCE)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+endif()
 
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
@@ -33,7 +47,10 @@ add_library(pissbot_util STATIC
     src/answers.cpp
 )
 target_include_directories(pissbot_util PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(pissbot_util PUBLIC SQLite3::SQLite3)
+# Use the variables rather than an imported target: CMake's own module names
+# the target SQLite::SQLite3, and the variables work with every CMake version.
+target_include_directories(pissbot_util PUBLIC ${SQLite3_INCLUDE_DIRS})
+target_link_libraries(pissbot_util PUBLIC ${SQLite3_LIBRARIES})
 
 # Module framework and modules. New files in src/modules/ are picked up
 # automatically; re-run cmake after adding one.
@@ -49,6 +66,9 @@ target_link_libraries(pissbot_modules PUBLIC pissbot_util dpp)
 
 add_executable(pissbot src/main.cpp)
 target_link_libraries(pissbot PRIVATE pissbot_modules)
+if(PISSBOT_STATIC)
+    target_link_options(pissbot PRIVATE -static)
+endif()
 
 if(PISSBOT_BUILD_TESTS)
     enable_testing()

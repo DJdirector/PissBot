@@ -4,6 +4,7 @@
 - [Getting Started](Getting-Started)
 - [Setup and Modules](Setup-and-Modules)
 - [Permissions](Permissions)
+- [Hosting Without Dependencies](Hosting-Without-Dependencies)
 
 **Modules**
 

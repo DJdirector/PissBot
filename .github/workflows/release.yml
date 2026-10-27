@@ -1,0 +1,36 @@
+name: Static build
+
+# Builds the self-contained executable for hosts without shared libraries
+# (such as bot-hosting.net). Runs on version tags and on demand; a tag also
+# publishes the binary as a GitHub release asset.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  static:
+    name: Static executable (musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build in Alpine
+        run: ./scripts/build-static.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pissbot-linux-x86_64
+          path: dist/pissbot
+
+      - name: Publish release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mv dist/pissbot dist/pissbot-linux-x86_64
+          gh release create "$GITHUB_REF_NAME" dist/pissbot-linux-x86_64 \
+            --title "$GITHUB_REF_NAME" --generate-notes
