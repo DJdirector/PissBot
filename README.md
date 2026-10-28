@@ -2,7 +2,7 @@
 
 A modular Discord bot written in C++ ([D++](https://github.com/brainboxdotcc/DPP) and SQLite). Each server turns on only the features it wants, and the bot registers slash commands only for those features.
 
-![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/DJdirector/PissBot/actions/workflows/ci.yml/badge.svg)
 
 ## Features
 
