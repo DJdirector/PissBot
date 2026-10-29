@@ -306,6 +306,22 @@ dpp::message setup_step_message(Database &db, uint64_t guild_id,
 }
 
 // --- YouTube dashboard ---
+// Decodes the XML entities YouTube's feed uses in titles (&amp; etc.).
+static std::string xml_unescape(std::string text) {
+  static const std::pair<const char *, const char *> kEntities[] = {
+      {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""},
+      {"&#39;", "'"}, {"&apos;", "'"}, {"&amp;", "&"}};
+  for (const auto &[from, to] : kEntities) {
+    size_t pos = 0;
+    const std::string f = from;
+    while ((pos = text.find(f, pos)) != std::string::npos) {
+      text.replace(pos, f.size(), to);
+      pos += std::string(to).size();
+    }
+  }
+  return text;
+}
+
 static std::string clip(const std::string &text, size_t max_chars) {
   std::string out = replace_all(text, "```", "` ` `");
   if (dpp::utility::utf8len(out) > max_chars)
@@ -1554,11 +1570,13 @@ int main() {
 
                     std::string watch_url =
                         "https://www.youtube.com/watch?v=" + latest_video_id;
+                    std::string video_title =
+                        xml_unescape(get_entry_tag("title"));
 
                     bot.request(
                         watch_url, dpp::m_get,
                         [&bot, notify_channel_id, sub, latest_video_id,
-                         watch_url, channel_name](
+                         watch_url, channel_name, video_title](
                             const dpp::http_request_completion_t &page_resp) {
                           pending_remove(latest_video_id);
                           if (page_resp.status != 200)
@@ -1602,14 +1620,19 @@ int main() {
                               render_template(selected_template, tc);
 
                           if (sub.use_embed) {
-                            std::string title = is_currently_live
+                            std::string label = is_currently_live
                                                     ? "🔴 Live Stream Started!"
                                                     : "🎥 New Video Uploaded!";
+                            dpp::embed_author author;
+                            author.name = label;
                             dpp::embed embed =
                                 dpp::embed()
-                                    .set_color(is_currently_live ? 0xFF0000
-                                                                 : 0x00FF00)
-                                    .set_title(title)
+                                    .set_color(0xFF0000)
+                                    .set_author(author)
+                                    .set_title(video_title.empty()
+                                                   ? label
+                                                   : clip(video_title, 256))
+                                    .set_url(watch_url)
                                     .set_description("[" + channel_name +
                                                      " - Watch Here](" +
                                                      watch_url + ")")
