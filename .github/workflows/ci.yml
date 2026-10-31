@@ -31,7 +31,7 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build unit tests
-        run: cmake --build build --target template_test database_test answers_test
+        run: cmake --build build --target template_test database_test answers_test casino_test
 
       - name: Run unit tests
         run: ctest --test-dir build -L unit --output-on-failure
