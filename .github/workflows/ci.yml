@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -50,7 +52,11 @@ jobs:
       - name: Cache compiler output
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          # ccache is content-addressed, so the key does not need to change
+          # when files change; a fixed key keeps the cache warm across edits.
+          key: ${{ runner.os }}-build
+          restore-keys: ${{ runner.os }}-build
+          max-size: 500M
 
       - name: Configure
         run: |
