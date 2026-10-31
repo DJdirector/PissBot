@@ -431,6 +431,27 @@ bool Database::remove_xp(uint64_t guild_id, uint64_t user_id, int amount) {
   return success;
 }
 
+bool Database::spend_xp(uint64_t guild_id, uint64_t user_id, int amount) {
+  if (amount <= 0)
+    return false;
+  sqlite3_stmt *stmt;
+  std::string sql = "UPDATE user_xp SET xp = xp - ? WHERE guild_id = ? AND "
+                    "user_id = ? AND xp >= ?;";
+
+  if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+    return false;
+
+  sqlite3_bind_int(stmt, 1, amount);
+  sqlite3_bind_int64(stmt, 2, guild_id);
+  sqlite3_bind_int64(stmt, 3, user_id);
+  sqlite3_bind_int(stmt, 4, amount);
+
+  bool success =
+      (sqlite3_step(stmt) == SQLITE_DONE) && sqlite3_changes(db) > 0;
+  sqlite3_finalize(stmt);
+  return success;
+}
+
 int Database::get_xp(uint64_t guild_id, uint64_t user_id) {
   sqlite3_stmt *stmt;
   std::string sql =

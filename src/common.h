@@ -20,6 +20,16 @@ std::string form_field(const dpp::form_submit_t &event, const std::string &id);
 dpp::message ephemeral_text(const std::string &text);
 dpp::message no_permission_message();
 
+// ---- XP and levels ----
+
+int level_for_xp(int xp);
+int xp_for_level(int level);
+
+// Adds XP and, when that raises the member's level, gives them the level
+// reward roles and optionally announces it in `announce_channel`.
+void grant_xp(dpp::cluster &bot, Database &db, uint64_t guild_id,
+              uint64_t user_id, int amount, uint64_t announce_channel = 0);
+
 // ---- Channel access (Discord error 50013 "Missing Permissions") ----
 
 struct ChannelAccess {

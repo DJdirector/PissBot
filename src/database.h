@@ -62,6 +62,9 @@ public:
   // XP System
   bool add_xp(uint64_t guild_id, uint64_t user_id, int amount);
   bool remove_xp(uint64_t guild_id, uint64_t user_id, int amount);
+  // Takes `amount` XP only if the user has at least that much (all or
+  // nothing, checked atomically). Returns false when they can't afford it.
+  bool spend_xp(uint64_t guild_id, uint64_t user_id, int amount);
   int get_xp(uint64_t guild_id, uint64_t user_id);
   std::vector<std::pair<uint64_t, int>> get_top_xp(uint64_t guild_id,
                                                    int limit = 10);
