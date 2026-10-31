@@ -52,3 +52,4 @@ std::unique_ptr<Module> make_answers_module();
 std::unique_ptr<Module> make_moderation_module();
 std::unique_ptr<Module> make_welcome_module();
 std::unique_ptr<Module> make_roles_module();
+std::unique_ptr<Module> make_casino_module();

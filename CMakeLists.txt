@@ -45,6 +45,7 @@ add_library(pissbot_util STATIC
     src/template.cpp
     src/database.cpp
     src/answers.cpp
+    src/casino.cpp
 )
 target_include_directories(pissbot_util PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Use the variables rather than an imported target: CMake's own module names

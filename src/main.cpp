@@ -66,35 +66,6 @@ bool is_recent_upload(const std::string &iso_time, int max_age_minutes = 30) {
   return age <= max_age_minutes;
 }
 
-int level_for_xp(int xp) {
-  return static_cast<int>(std::sqrt(std::max(0, xp) / 100.0));
-}
-
-int xp_for_level(int level) { return 100 * level * level; }
-
-void grant_xp(dpp::cluster &bot, Database &db, uint64_t guild_id,
-              uint64_t user_id, int amount, uint64_t announce_channel = 0) {
-  int old_level = level_for_xp(db.get_xp(guild_id, user_id));
-  if (!db.add_xp(guild_id, user_id, amount))
-    return;
-  int new_level = level_for_xp(db.get_xp(guild_id, user_id));
-  if (new_level <= old_level)
-    return;
-
-  for (const auto &lr : db.get_level_roles(guild_id)) {
-    if (lr.level <= new_level)
-      bot.guild_member_add_role(guild_id, user_id, lr.role_id);
-  }
-  if (announce_channel != 0) {
-    dpp::message msg(announce_channel, "🎉 <@" + std::to_string(user_id) +
-                                           "> reached **level " +
-                                           std::to_string(new_level) + "**!");
-    msg.set_allowed_mentions(true, false, false, false);
-    send_message_logged(bot, msg, "a level-up announcement");
-  }
-}
-
-
 struct Feature {
   const char *key;
   const char *name;
