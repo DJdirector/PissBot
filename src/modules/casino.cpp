@@ -1,6 +1,8 @@
-// Casino: slots, roulette and blackjack played with XP. The game rules and
-// payouts are in casino.h; this file is the Discord side (commands, buttons,
-// cooldowns, and saving a blackjack hand so it survives a bot restart).
+// Casino: slots, roulette and blackjack played with piss tokens. Members opt in
+// with /casino opt-in (which gives them the Gambler role) and claim 100 tokens
+// a day. The game rules and payouts are in casino.h; this file is the Discord
+// side (commands, buttons, cooldowns, and saving a blackjack hand so it
+// survives a bot restart).
 #include "casino.h"
 #include "module.h"
 #include <ctime>
@@ -42,10 +44,13 @@ dpp::message embed_message(const std::string &title, const std::string &body,
   return m;
 }
 
-void credit(Ctx &ctx, uint64_t guild, uint64_t user, int amount,
-            uint64_t announce_channel) {
+std::string tokens(int64_t n) {
+  return "**" + std::to_string(n) + "** piss tokens";
+}
+
+void credit(Ctx &ctx, uint64_t guild, uint64_t user, int amount) {
   if (amount > 0)
-    grant_xp(ctx.bot, ctx.db, guild, user, amount, announce_channel);
+    ctx.db.token_add(guild, user, amount);
 }
 
 // "You won +X" / "Push" / "You lost X" plus the new balance.
@@ -53,13 +58,13 @@ std::string result_text(Ctx &ctx, uint64_t guild, uint64_t user, int stake,
                         int paid_back) {
   std::string line;
   if (paid_back > stake)
-    line = "🎉 You won **+" + std::to_string(paid_back - stake) + " XP**";
+    line = "🎉 You won **+" + std::to_string(paid_back - stake) +
+           "** piss tokens";
   else if (paid_back == stake)
-    line = "🤝 Your bet of **" + std::to_string(stake) + " XP** is returned";
+    line = "🤝 Your bet of " + tokens(stake) + " is returned";
   else
-    line = "❌ You lost **" + std::to_string(stake) + " XP**";
-  return line + "\nBalance: **" + std::to_string(ctx.db.get_xp(guild, user)) +
-         " XP**";
+    line = "❌ You lost " + tokens(stake);
+  return line + "\nBalance: " + tokens(ctx.db.token_balance(guild, user));
 }
 
 // ---- Blackjack hand storage and display -----------------------------------
@@ -87,8 +92,7 @@ std::string value_text(const std::vector<int> &cards) {
 dpp::message hand_view(const BlackjackGame &g, uint64_t user, bool reveal,
                        const std::string &headline, uint32_t color,
                        bool can_double) {
-  std::string body = "<@" + str(user) + ">, bet **" +
-                     std::to_string(g.stake()) + " XP**\n\n";
+  std::string body = "<@" + str(user) + ">, bet " + tokens(g.stake()) + "\n\n";
   body += "Dealer: " +
           (reveal ? cards_text(g.dealer) + " (" + value_text(g.dealer) + ")"
                   : "`" + card_text(g.dealer[0]) + "` `?`") +
@@ -120,16 +124,15 @@ dpp::message hand_view(const BlackjackGame &g, uint64_t user, bool reveal,
 
 // Ends a hand: the dealer plays (unless the player busted or someone has a
 // natural), the hand is removed from storage, winnings are paid out.
-dpp::message finish_hand(Ctx &ctx, uint64_t guild, uint64_t channel,
-                         uint64_t user, BlackjackGame &g,
-                         const std::string &note) {
+dpp::message finish_hand(Ctx &ctx, uint64_t guild, uint64_t user,
+                         BlackjackGame &g, const std::string &note) {
   ctx.db.kv_set(guild, hand_key(user), "");
   if (!blackjack_player_bust(g) && !blackjack_finished_on_deal(g))
     blackjack_dealer_play(g);
 
   BlackjackOutcome outcome = blackjack_outcome(g);
   int paid = blackjack_return(g, outcome);
-  credit(ctx, guild, user, paid, channel);
+  credit(ctx, guild, user, paid);
 
   std::string headline;
   uint32_t color = kRed;
@@ -166,7 +169,7 @@ void settle_stale_hand(Ctx &ctx, uint64_t guild, uint64_t user) {
     return;
   ctx.db.kv_set(guild, hand_key(user), "");
   blackjack_dealer_play(g);
-  credit(ctx, guild, user, blackjack_return(g, blackjack_outcome(g)), 0);
+  credit(ctx, guild, user, blackjack_return(g, blackjack_outcome(g)));
 }
 
 // ---- Starting a game ---------------------------------------------------------
@@ -193,10 +196,11 @@ std::string try_start(Ctx &ctx, uint64_t guild, uint64_t user, int64_t bet) {
 
   if (bet < kMinBet || bet > kMaxBet)
     return "Bets must be between " + std::to_string(kMinBet) + " and " +
-           std::to_string(kMaxBet) + " XP.";
-  if (!ctx.db.spend_xp(guild, user, static_cast<int>(bet)))
-    return "You don't have enough XP for that bet. You have " +
-           std::to_string(ctx.db.get_xp(guild, user)) + " XP.";
+           std::to_string(kMaxBet) + " piss tokens.";
+  if (!ctx.db.token_spend(guild, user, bet))
+    return "You don't have enough piss tokens for that bet. You have " +
+           tokens(ctx.db.token_balance(guild, user)) +
+           ". Claim your daily tokens with /casino daily.";
 
   ctx.db.kv_set(guild, cooldown_key(user), std::to_string(now_s()));
   return "";
@@ -204,9 +208,12 @@ std::string try_start(Ctx &ctx, uint64_t guild, uint64_t user, int64_t bet) {
 
 std::string rules_text() {
   std::string t = "**Casino rules**\n";
-  t += "Bets are XP: " + std::to_string(kMinBet) + " to " +
-       std::to_string(kMaxBet) + " per game. One game every " +
-       std::to_string(kCooldownSeconds / 60) +
+  t += "Opt in with `/casino opt-in` to get the " + std::string(kRoleName) +
+       " role, then claim **" + std::to_string(kDailyTokens) +
+       "** piss tokens every day with `/casino daily`. Games are played with "
+       "piss tokens, not XP.\n";
+  t += "Bets are " + std::to_string(kMinBet) + " to " + std::to_string(kMaxBet) +
+       " piss tokens. One game every " + std::to_string(kCooldownSeconds / 60) +
        " minutes, whichever game you pick.\n\n";
   t += "**Slots**: two 🍒 pays x" + std::to_string(kCherryPairMultiplier) +
        ". Three in a row pays ";
@@ -226,18 +233,138 @@ std::string rules_text() {
   return t;
 }
 
+// ---- Opt-in role -----------------------------------------------------------------
+
+uint64_t configured_role(Database &db, uint64_t guild) {
+  std::string v = db.kv_get(guild, "casino_role");
+  if (v.empty())
+    return 0;
+  try {
+    return std::stoull(v);
+  } catch (...) {
+    return 0;
+  }
+}
+
+bool has_gambler_role(Database &db, const dpp::interaction &cmd) {
+  uint64_t role = configured_role(db, cmd.guild_id);
+  if (role == 0)
+    return false;
+  for (const auto &r : cmd.member.get_roles())
+    if (static_cast<uint64_t>(r) == role)
+      return true;
+  return false;
+}
+
+const char *kNeedOptIn =
+    "You need to opt in first. Use `/casino opt-in` to join the casino.";
+
+std::string next_daily_text(int64_t last) {
+  return "You already claimed today. Come back <t:" +
+         std::to_string(last + kDailySeconds) + ":R>.";
+}
+
+// Claims the daily tokens; returns "" on success, otherwise why not.
+std::string claim_daily(Database &db, uint64_t guild, uint64_t user) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (db.token_claim_daily(guild, user, kDailyTokens, now_s(), kDailySeconds))
+    return "";
+  return next_daily_text(db.token_last_daily(guild, user));
+}
+
+// Gives the member the Gambler role (creating it the first time), then
+// replies. This runs asynchronously, so it only captures things that outlive
+// the command (the bot and the database), never the Ctx.
+void opt_in(Ctx &ctx, const dpp::slashcommand_t &event) {
+  dpp::cluster &bot = ctx.bot;
+  Database &db = ctx.db;
+  const uint64_t guild = event.command.guild_id;
+  const uint64_t user = event.command.usr.id;
+
+  if (has_gambler_role(db, event.command)) {
+    event.reply(ephemeral_text("You're already in the casino. Balance: " +
+                               tokens(db.token_balance(guild, user))));
+    return;
+  }
+  event.thinking(true);
+
+  const std::string role_problem =
+      "I couldn't set up the " + std::string(kRoleName) +
+      " role. An admin needs to give me the Manage Roles permission, or pick "
+      "an existing role with `/casino role`.";
+
+  auto give_role = [&bot, &db, event, guild, user,
+                    role_problem](uint64_t role_id) {
+    bot.guild_member_add_role(
+        guild, user, role_id,
+        [&db, event, guild, user,
+         role_problem](const dpp::confirmation_callback_t &cb) {
+          if (cb.is_error()) {
+            event.edit_original_response(dpp::message(role_problem));
+            return;
+          }
+          std::string text = "🎰 Welcome to the casino! You now have the " +
+                             std::string(kRoleName) + " role.";
+          if (claim_daily(db, guild, user).empty())
+            text += "\nHere are your first " + std::to_string(kDailyTokens) +
+                    " piss tokens.";
+          text += "\nBalance: " + tokens(db.token_balance(guild, user)) +
+                  "\nUse `/casino rules` to see how the games pay.";
+          event.edit_original_response(dpp::message(text));
+        });
+  };
+
+  uint64_t role = configured_role(db, guild);
+  if (role != 0 && dpp::find_role(role)) {
+    give_role(role);
+    return;
+  }
+
+  dpp::role fresh;
+  fresh.set_guild_id(guild).set_name(kRoleName);
+  bot.role_create(fresh, [&db, event, guild, give_role,
+                          role_problem](const dpp::confirmation_callback_t &cb) {
+    if (cb.is_error()) {
+      event.edit_original_response(dpp::message(role_problem));
+      return;
+    }
+    uint64_t role_id = std::get<dpp::role>(cb.value).id;
+    db.kv_set(guild, "casino_role", str(role_id));
+    give_role(role_id);
+  });
+}
+
+void opt_out(Ctx &ctx, const dpp::slashcommand_t &event) {
+  if (!has_gambler_role(ctx.db, event.command)) {
+    event.reply(ephemeral_text("You aren't opted in."));
+    return;
+  }
+  event.thinking(true);
+  ctx.bot.guild_member_remove_role(
+      event.command.guild_id, event.command.usr.id,
+      configured_role(ctx.db, event.command.guild_id),
+      [event](const dpp::confirmation_callback_t &cb) {
+        event.edit_original_response(dpp::message(
+            cb.is_error()
+                ? "I couldn't remove the role. An admin needs to check that my "
+                  "role sits above it."
+                : "You left the casino. Your piss tokens are kept if you come "
+                  "back with `/casino opt-in`."));
+      });
+}
+
 class CasinoModule : public Module {
 public:
   std::string id() const override { return "casino"; }
   std::string name() const override { return "Casino"; }
   std::string description() const override {
-    return "Blackjack, roulette and slots played with XP";
+    return "Opt-in blackjack, roulette and slots played with piss tokens";
   }
 
   std::vector<dpp::slashcommand> commands(dpp::snowflake a) const override {
     auto bet_option = [] {
-      return dpp::command_option(dpp::co_integer, "bet", "How much XP to bet",
-                                 true)
+      return dpp::command_option(dpp::co_integer, "bet",
+                                 "How many piss tokens to bet", true)
           .set_min_value(kMinBet)
           .set_max_value(kMaxBet);
     };
@@ -272,24 +399,43 @@ public:
     sl.add_option(bet_option());
     v.push_back(sl);
 
-    v.emplace_back("casino", "Show the casino rules and payouts", a);
+    dpp::slashcommand cs("casino",
+                         "Join the casino, claim daily tokens, see the rules", a);
+    cs.add_option(dpp::command_option(dpp::co_sub_command, "opt-in",
+                                      "Join the casino and get the Gambler role"));
+    cs.add_option(dpp::command_option(dpp::co_sub_command, "opt-out",
+                                      "Leave the casino and drop the Gambler role"));
+    cs.add_option(dpp::command_option(dpp::co_sub_command, "daily",
+                                      "Claim your daily piss tokens"));
+    cs.add_option(dpp::command_option(dpp::co_sub_command, "balance",
+                                      "Show how many piss tokens you have"));
+    cs.add_option(dpp::command_option(dpp::co_sub_command, "rules",
+                                      "Show the casino rules and payouts"));
+    dpp::command_option role(dpp::co_sub_command, "role",
+                             "Choose the role members get when they opt in (Admin)");
+    role.add_option(dpp::command_option(
+        dpp::co_role, "role", "The role to use for the casino", true));
+    cs.add_option(role);
+    v.push_back(cs);
     return v;
   }
 
   bool on_slash(Ctx &ctx, const dpp::slashcommand_t &event) override {
     const std::string cmd = event.command.get_command_name();
-    if (cmd != "blackjack" && cmd != "roulette" && cmd != "slots" &&
-        cmd != "casino")
+    if (cmd == "casino") {
+      handle_casino(ctx, event);
+      return true;
+    }
+    if (cmd != "blackjack" && cmd != "roulette" && cmd != "slots")
       return false;
 
-    if (cmd == "casino") {
-      event.reply(ephemeral_text(rules_text()));
+    if (!has_gambler_role(ctx.db, event.command)) {
+      event.reply(ephemeral_text(kNeedOptIn));
       return true;
     }
 
     const uint64_t guild = event.command.guild_id;
     const uint64_t user = event.command.usr.id;
-    const uint64_t channel = event.command.channel_id;
     int64_t bet = std::get<int64_t>(event.get_parameter("bet"));
 
     RouletteBet rbet;
@@ -321,7 +467,7 @@ public:
     if (cmd == "slots") {
       int a = spin_reel(rng()), b = spin_reel(rng()), c = spin_reel(rng());
       int paid = stake * slot_multiplier(a, b, c);
-      credit(ctx, guild, user, paid, channel);
+      credit(ctx, guild, user, paid);
       std::string body = "<@" + str(user) + ">\n\n**[ " +
                          slot_symbol(a).emoji + " | " + slot_symbol(b).emoji +
                          " | " + slot_symbol(c).emoji + " ]**\n\n" +
@@ -332,7 +478,7 @@ public:
     } else if (cmd == "roulette") {
       int pocket = std::uniform_int_distribution<int>(0, 36)(rng());
       int paid = stake * roulette_multiplier(rbet, pocket);
-      credit(ctx, guild, user, paid, channel);
+      credit(ctx, guild, user, paid);
       const char *dot = pocket == 0 ? "🟢" : roulette_is_red(pocket) ? "🔴" : "⚫";
       std::string body = "<@" + str(user) + "> bet on **" +
                          roulette_label(rbet) + "**\n\nThe ball lands on " +
@@ -342,11 +488,11 @@ public:
     } else {
       BlackjackGame g = blackjack_deal(stake, now_s(), rng());
       if (blackjack_finished_on_deal(g)) {
-        event.reply(finish_hand(ctx, guild, channel, user, g, ""));
+        event.reply(finish_hand(ctx, guild, user, g, ""));
       } else {
         save_hand(ctx, guild, user, g);
         event.reply(hand_view(g, user, false, "Hit, stand or double down?",
-                              kBlue, ctx.db.get_xp(guild, user) >= stake));
+                              kBlue, ctx.db.token_balance(guild, user) >= stake));
       }
     }
     return true;
@@ -373,7 +519,6 @@ public:
     }
 
     const uint64_t guild = event.command.guild_id;
-    const uint64_t channel = event.command.channel_id;
     std::lock_guard<std::mutex> lock(g_mutex);
 
     BlackjackGame g;
@@ -383,19 +528,18 @@ public:
     }
     if (now_s() - g.started >= kHandTimeoutSeconds) {
       event.reply(dpp::ir_update_message,
-                  finish_hand(ctx, guild, channel, owner, g,
+                  finish_hand(ctx, guild, owner, g,
                               "⏱️ The hand sat idle, so you stood."));
       return true;
     }
 
     if (action == "stand") {
-      event.reply(dpp::ir_update_message,
-                  finish_hand(ctx, guild, channel, owner, g, ""));
+      event.reply(dpp::ir_update_message, finish_hand(ctx, guild, owner, g, ""));
     } else if (action == "hit") {
       blackjack_hit(g);
       if (blackjack_player_bust(g) || hand_value(g.player).total == 21) {
         event.reply(dpp::ir_update_message,
-                    finish_hand(ctx, guild, channel, owner, g, ""));
+                    finish_hand(ctx, guild, owner, g, ""));
       } else {
         save_hand(ctx, guild, owner, g);
         event.reply(dpp::ir_update_message,
@@ -406,19 +550,68 @@ public:
         event.reply(ephemeral_text("You can only double down on your first move."));
         return true;
       }
-      if (!ctx.db.spend_xp(guild, owner, g.bet)) {
+      if (!ctx.db.token_spend(guild, owner, g.bet)) {
         event.reply(ephemeral_text(
-            "You don't have enough XP to double down. You need " +
+            "You don't have enough piss tokens to double down. You need " +
             std::to_string(g.bet) + " more."));
         return true;
       }
       blackjack_double(g);
-      event.reply(dpp::ir_update_message,
-                  finish_hand(ctx, guild, channel, owner, g, ""));
+      event.reply(dpp::ir_update_message, finish_hand(ctx, guild, owner, g, ""));
     } else {
       return false;
     }
     return true;
+  }
+
+private:
+  void handle_casino(Ctx &ctx, const dpp::slashcommand_t &event) {
+    const auto &data = event.command.get_command_interaction();
+    const std::string sub = data.options.empty() ? "" : data.options[0].name;
+    const uint64_t guild = event.command.guild_id;
+    const uint64_t user = event.command.usr.id;
+
+    if (sub == "opt-in") {
+      opt_in(ctx, event);
+    } else if (sub == "opt-out") {
+      opt_out(ctx, event);
+    } else if (sub == "daily") {
+      if (!has_gambler_role(ctx.db, event.command)) {
+        event.reply(ephemeral_text(kNeedOptIn));
+        return;
+      }
+      std::string problem = claim_daily(ctx.db, guild, user);
+      event.reply(ephemeral_text(
+          problem.empty()
+              ? "🪙 You claimed " + std::to_string(kDailyTokens) +
+                    " piss tokens. Balance: " +
+                    tokens(ctx.db.token_balance(guild, user))
+              : problem));
+    } else if (sub == "balance") {
+      event.reply(ephemeral_text("Balance: " +
+                                 tokens(ctx.db.token_balance(guild, user))));
+    } else if (sub == "rules") {
+      event.reply(ephemeral_text(rules_text()));
+    } else if (sub == "role") {
+      if (!is_admin(event.command)) {
+        event.reply(no_permission_message());
+        return;
+      }
+      uint64_t role_id = 0;
+      for (const auto &o : data.options[0].options)
+        if (o.name == "role")
+          role_id = std::get<dpp::snowflake>(o.value);
+      if (role_id == 0) {
+        event.reply(ephemeral_text("Pick a role."));
+        return;
+      }
+      ctx.db.kv_set(guild, "casino_role", str(role_id));
+      event.reply(ephemeral_text("✅ Members who opt in will get <@&" +
+                                 str(role_id) +
+                                 ">. My role must sit above it in the role list."));
+    } else {
+      event.reply(ephemeral_text("Unknown casino command."));
+    }
   }
 };
 

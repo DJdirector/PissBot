@@ -78,6 +78,18 @@ public:
   int get_rank(uint64_t guild_id, uint64_t user_id);
   std::vector<uint64_t> get_leaderboard_guilds();
 
+  // Piss tokens: the casino's own currency, separate from XP
+  int64_t token_balance(uint64_t guild_id, uint64_t user_id);
+  bool token_add(uint64_t guild_id, uint64_t user_id, int64_t amount);
+  // All or nothing: takes the tokens only if the user has enough.
+  bool token_spend(uint64_t guild_id, uint64_t user_id, int64_t amount);
+  // Gives `amount` tokens unless the last claim was less than
+  // `cooldown_seconds` before `now`. Returns whether it paid out.
+  bool token_claim_daily(uint64_t guild_id, uint64_t user_id, int64_t amount,
+                         int64_t now, int64_t cooldown_seconds);
+  // Unix time of the last daily claim (0 = never).
+  int64_t token_last_daily(uint64_t guild_id, uint64_t user_id);
+
   // Level Role Rewards
   bool add_level_role(uint64_t guild_id, int level, uint64_t role_id);
   bool remove_level_role(uint64_t guild_id, int level);
