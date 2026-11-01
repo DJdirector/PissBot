@@ -4,21 +4,23 @@ For anyone changing the code or adding features.
 
 ## Source layout
 
-| File | Purpose |
-| --- | --- |
-| `src/main.cpp` | Startup, intents, event wiring, the setup wizard, the permissions dashboard, background timers, and the handlers of the four original modules |
-| `src/module.h`, `src/module.cpp` | The `Module` interface, the module registry, per-server enable state, per-server command sync |
-| `src/modules/legacy.cpp` | Command definitions for the core commands and the four original modules |
-| `src/modules/moderation.cpp` | Moderation module |
-| `src/modules/welcome.cpp` | Welcome and autorole module |
-| `src/modules/roles.cpp` | Role menus module |
-| `src/template.h`, `src/template.cpp` | The `$(...)` template engine. No Discord dependencies |
-| `src/common.h`, `src/common.cpp` | Shared helpers: permission checks, modal field reader, reply helpers |
-| `src/answers.h`, `src/answers.cpp` | Answers matching and cooldown logic. No Discord dependency |
-| `src/database.h`, `src/database.cpp` | SQLite wrapper and migrations |
-| `tests/` | Unit tests, run with `ctest` |
-| `.github/workflows/ci.yml` | GitHub Actions: unit tests and a full build on every push and pull request |
-| `CMakeLists.txt` | Build. Defines `pissbot_util` (no D++), `pissbot_modules` (D++) and the `pissbot` executable. Globs `src/modules/*.cpp` |
+| File                                 | Purpose                                                                                                                                       |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main.cpp`                       | Startup, intents, event wiring, the setup wizard, the permissions dashboard, background timers, and the handlers of the four original modules |
+| `src/module.h`, `src/module.cpp`     | The `Module` interface, the module registry, per-server enable state, per-server command sync                                                 |
+| `src/modules/legacy.cpp`             | Command definitions for the core commands and the four original modules                                                                       |
+| `src/modules/moderation.cpp`         | Moderation module                                                                                                                             |
+| `src/modules/welcome.cpp`            | Welcome and autorole module                                                                                                                   |
+| `src/modules/roles.cpp`              | Role menus module                                                                                                                             |
+| `src/modules/casino.cpp`             | Casino module: commands, buttons, react-to-join sign-up, token commands, live leaderboard                                                     |
+| `src/casino.h`, `src/casino.cpp`     | Casino rules, payouts and cards. No Discord dependency                                                                                        |
+| `src/template.h`, `src/template.cpp` | The `$(...)` template engine. No Discord dependencies                                                                                         |
+| `src/common.h`, `src/common.cpp`     | Shared helpers: permission checks, modal field reader, reply helpers                                                                          |
+| `src/answers.h`, `src/answers.cpp`   | Answers matching and cooldown logic. No Discord dependency                                                                                    |
+| `src/database.h`, `src/database.cpp` | SQLite wrapper and migrations                                                                                                                 |
+| `tests/`                             | Unit tests, run with `ctest`                                                                                                                  |
+| `.github/workflows/ci.yml`           | GitHub Actions: unit tests and a full build on every push and pull request                                                                    |
+| `CMakeLists.txt`                     | Build. Defines `pissbot_util` (no D++), `pissbot_modules` (D++) and the `pissbot` executable. Globs `src/modules/*.cpp`                       |
 
 The four original modules (levels, social, commands, answers) still have their handlers in `main.cpp`, gated by module. Moving them into `src/modules/` is mechanical future work. New modules should be separate files.
 
@@ -103,20 +105,20 @@ To add a variable, handle its name in `call_function` and add it to `builtin_nam
 
 SQLite file `bot_data.db`, created in the working directory.
 
-| Table | Contents |
-| --- | --- |
-| `guild_settings` | Notification and leaderboard channels, leaderboard message |
-| `youtube_subs` | Tracked YouTube channels and their settings |
-| `youtube_cache` | Last posted video per channel |
-| `user_xp` | XP per member per server |
-| `level_roles` | Level to role rewards |
-| `custom_commands` | `!commands` |
-| `answers` | Auto-replies |
-| `command_permissions` | Roles allowed per feature |
-| `guild_modules` | Enabled modules per server (a row means enabled) |
-| `guild_kv` | Generic per-server settings for modules |
-| `counters` | `$(count)` counters |
-| `warnings` | Moderation warnings |
+| Table                 | Contents                                                   |
+| --------------------- | ---------------------------------------------------------- |
+| `guild_settings`      | Notification and leaderboard channels, leaderboard message |
+| `youtube_subs`        | Tracked YouTube channels and their settings                |
+| `youtube_cache`       | Last posted video per channel                              |
+| `user_xp`             | XP per member per server                                   |
+| `level_roles`         | Level to role rewards                                      |
+| `custom_commands`     | `!commands`                                                |
+| `answers`             | Auto-replies                                               |
+| `command_permissions` | Roles allowed per feature                                  |
+| `guild_modules`       | Enabled modules per server (a row means enabled)           |
+| `guild_kv`            | Generic per-server settings for modules                    |
+| `counters`            | `$(count)` counters                                        |
+| `warnings`            | Moderation warnings                                        |
 
 All queries use prepared statements with bound parameters.
 
@@ -124,13 +126,13 @@ All queries use prepared statements with bound parameters.
 
 Tests are small programs that exit non-zero on failure (`CHECK(...)` in `tests/check.h`). They are registered in `tests/CMakeLists.txt`.
 
-| Test | Label | Covers |
-| --- | --- | --- |
-| `template_test` | unit | The `$(...)` engine, maths, escapes, limits, validation |
-| `database_test` | unit | Every database operation, SQL injection strings, and the migration of old `{placeholder}` messages |
-| `answers_test` | unit | Answer matching rules and cooldowns |
-| `access_test` | full | The channel permission check behind "Missing Permissions" warnings, using a fake guild in the D++ cache |
-| `commands_test` | full | Every slash command definition against Discord's rules (name format, length limits, required options first, no duplicates, 100 command cap) |
+| Test            | Label | Covers                                                                                                                                      |
+| --------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `template_test` | unit  | The `$(...)` engine, maths, escapes, limits, validation                                                                                     |
+| `database_test` | unit  | Every database operation, SQL injection strings, and the migration of old `{placeholder}` messages                                          |
+| `answers_test`  | unit  | Answer matching rules and cooldowns                                                                                                         |
+| `access_test`   | full  | The channel permission check behind "Missing Permissions" warnings, using a fake guild in the D++ cache                                     |
+| `commands_test` | full  | Every slash command definition against Discord's rules (name format, length limits, required options first, no duplicates, 100 command cap) |
 
 ```bash
 cmake --build build
