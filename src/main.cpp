@@ -78,6 +78,7 @@ static const Feature kFeatures[] = {
     {"levels", "Level rewards", "/levelrole, /levelrole_remove"},
     {"commands", "Custom commands", "/command_add, /command_remove"},
     {"xp", "XP adjustments", "/add_xp, /remove_xp"},
+    {"tokens", "Token adjustments", "/tokens_add, /tokens_remove, /tokens_set"},
     {"answers", "Answers (auto-replies)", "/answers"},
     {"moderation", "Moderation", "/warn, /timeout, /kick, /ban, /purge, /modlog"},
     {"welcome", "Welcome and autorole", "/welcome"},
@@ -178,11 +179,13 @@ bool valid_command_name(const std::string &name) {
 
 // --- Guided setup wizard ---
 // Steps: modules -> notify (if social is on) -> leaderboard (if levels is on)
+// -> casino channel, casino leaderboard, casino sign-up (if casino is on)
 // -> done
 std::string next_setup_step(Database &db, uint64_t guild_id,
                             const std::string &current) {
-  static const std::vector<std::string> order = {"modules", "notify",
-                                                 "leaderboard", "done"};
+  static const std::vector<std::string> order = {
+      "modules",        "notify",     "leaderboard", "casino_channel",
+      "casino_lb",      "casino_signup", "done"};
   auto enabled = db.get_enabled_modules(guild_id);
   size_t idx = std::find(order.begin(), order.end(), current) - order.begin();
   for (size_t k = idx + 1; k < order.size(); ++k) {
@@ -190,9 +193,48 @@ std::string next_setup_step(Database &db, uint64_t guild_id,
       continue;
     if (order[k] == "leaderboard" && !enabled.count("levels"))
       continue;
+    if (order[k].rfind("casino_", 0) == 0 && !enabled.count("casino"))
+      continue;
     return order[k];
   }
   return "done";
+}
+
+// The wizard steps that ask for a channel: which select menu they use and
+// what they say.
+struct ChannelStep {
+  const char *step;
+  const char *select_id;
+  const char *text;
+};
+static const ChannelStep kChannelSteps[] = {
+    {"notify", "select_notification_channel",
+     "**Setup: notification channel**\nPick the channel where I post YouTube "
+     "uploads and live alerts. I'll drop a short guide there so everyone knows "
+     "what to do next."},
+    {"leaderboard", "select_xp_leaderboard_channel",
+     "**Setup: XP leaderboard**\nPick the channel for the auto-updating XP "
+     "leaderboard. I'll explain how XP works there."},
+    {"casino_channel", "select_casino_channel",
+     "**Setup: casino channel**\nPick the channel where members play slots, "
+     "roulette and blackjack. Games only work there, so they don't flood your "
+     "other chats."},
+    {"casino_lb", "select_casino_leaderboard_channel",
+     "**Setup: casino leaderboard**\nPick the channel for the live casino "
+     "leaderboard (who holds the most piss tokens). Keep it separate from the "
+     "XP leaderboard."},
+    {"casino_signup", "select_casino_signup_channel",
+     "**Setup: casino sign-up message**\nPick the channel where I post the "
+     "sign-up message. Members react to it with 🎰 to get the Gambling role "
+     "and join the casino. I'll make the role if it doesn't exist."},
+};
+
+static const ChannelStep *find_channel_step(const std::string &step) {
+  for (const auto &c : kChannelSteps) {
+    if (step == c.step)
+      return &c;
+  }
+  return nullptr;
 }
 
 dpp::message setup_step_message(Database &db, uint64_t guild_id,
@@ -219,19 +261,11 @@ dpp::message setup_step_message(Database &db, uint64_t guild_id,
       select.add_select_option(opt);
     }
     msg.add_component(dpp::component().add_component(select));
-  } else if (step == "notify" || step == "leaderboard") {
-    bool notify = (step == "notify");
-    msg.set_content(
-        notify ? "**Setup: notification channel**\nPick the channel where I "
-                 "post YouTube uploads and live alerts. I'll drop a short "
-                 "guide there so everyone knows what to do next."
-               : "**Setup: XP leaderboard**\nPick the channel for the "
-                 "auto-updating XP leaderboard. I'll explain how XP works "
-                 "there.");
+  } else if (const ChannelStep *cs = find_channel_step(step)) {
+    msg.set_content(cs->text);
     dpp::component select;
     select.set_type(dpp::cot_channel_selectmenu);
-    select.set_id(notify ? "select_notification_channel"
-                         : "select_xp_leaderboard_channel");
+    select.set_id(cs->select_id);
     select.set_placeholder("Choose a text channel...");
     select.add_channel_type(dpp::CHANNEL_TEXT);
 
@@ -732,6 +766,23 @@ int main() {
     sync_guild_commands(ctx, event.created.id);
   });
 
+  // --- Reactions: forwarded to enabled modules (casino sign-up) ---
+  bot.on_message_reaction_add([&ctx](const dpp::message_reaction_add_t &event) {
+    auto enabled = ctx.db.get_enabled_modules(event.reacting_guild.id);
+    for (const auto &m : all_modules()) {
+      if (enabled.count(m->id()))
+        m->on_reaction_add(ctx, event);
+    }
+  });
+  bot.on_message_reaction_remove(
+      [&ctx](const dpp::message_reaction_remove_t &event) {
+        auto enabled = ctx.db.get_enabled_modules(event.reacting_guild.id);
+        for (const auto &m : all_modules()) {
+          if (enabled.count(m->id()))
+            m->on_reaction_remove(ctx, event);
+        }
+      });
+
   // --- Slash Commands ---
   bot.on_slashcommand([&bot, &db](const dpp::slashcommand_t &event) {
     std::string command = event.command.get_command_name();
@@ -1082,6 +1133,30 @@ int main() {
           db, event.command.guild_id,
           next_setup_step(db, event.command.guild_id, "leaderboard"));
       std::string warn = channel_warning(bot, event.command.guild_id, channel_id);
+      if (!warn.empty())
+        next.set_content(warn + "\n\n" + next.content);
+      event.reply(dpp::ir_update_message, next);
+    } else if (event.custom_id == "select_casino_channel" ||
+               event.custom_id == "select_casino_leaderboard_channel" ||
+               event.custom_id == "select_casino_signup_channel") {
+      if (event.values.empty())
+        return;
+      const uint64_t gid = event.command.guild_id;
+      dpp::snowflake channel_id = std::stoull(event.values[0]);
+      std::string step;
+      if (event.custom_id == "select_casino_channel") {
+        casino_set_channel(ctx, gid, channel_id);
+        step = "casino_channel";
+      } else if (event.custom_id == "select_casino_leaderboard_channel") {
+        casino_set_leaderboard_channel(ctx, gid, channel_id);
+        step = "casino_lb";
+      } else {
+        casino_post_signup(ctx, gid, channel_id);
+        step = "casino_signup";
+      }
+      dpp::message next =
+          setup_step_message(db, gid, next_setup_step(db, gid, step));
+      std::string warn = channel_warning(bot, gid, channel_id);
       if (!warn.empty())
         next.set_content(warn + "\n\n" + next.content);
       event.reply(dpp::ir_update_message, next);
@@ -1700,6 +1775,10 @@ int main() {
                   });
             }
           }
+
+          // Auto-update the casino leaderboards (separate from the XP one)
+          Ctx timer_ctx{bot, db};
+          casino_refresh_leaderboards(timer_ctx);
         },
         300);
   });

@@ -47,7 +47,7 @@ std::string channel_warning(dpp::cluster &bot, uint64_t guild_id,
                             uint64_t channel_id);
 
 // One line per configured channel (notifications, leaderboard, welcome, mod
-// log) saying whether the bot can post there. Used by /bot_status.
+// log, casino) saying whether the bot can post there. Used by /bot_status.
 std::string channel_access_report(dpp::cluster &bot, Database &db,
                                   uint64_t guild_id);
 

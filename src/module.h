@@ -31,6 +31,9 @@ public:
   virtual bool on_message(Ctx &, const dpp::message_create_t &) { return false; }
   virtual void on_member_join(Ctx &, const dpp::guild_member_add_t &) {}
   virtual void on_member_leave(Ctx &, const dpp::guild_member_remove_t &) {}
+  virtual void on_reaction_add(Ctx &, const dpp::message_reaction_add_t &) {}
+  virtual void on_reaction_remove(Ctx &,
+                                  const dpp::message_reaction_remove_t &) {}
 };
 
 // Registry of all toggleable modules (order = order shown in /setup).
@@ -53,3 +56,16 @@ std::unique_ptr<Module> make_moderation_module();
 std::unique_ptr<Module> make_welcome_module();
 std::unique_ptr<Module> make_roles_module();
 std::unique_ptr<Module> make_casino_module();
+
+// ---- Casino helpers used by /setup and the 5-minute timer (modules/casino.cpp)
+
+// Remembers the channel where games are played; games only work there.
+// Posts a short welcome in it.
+void casino_set_channel(Ctx &ctx, uint64_t guild_id, uint64_t channel_id);
+// Sets the live casino leaderboard channel and draws the leaderboard there.
+void casino_set_leaderboard_channel(Ctx &ctx, uint64_t guild_id,
+                                    uint64_t channel_id);
+// Posts the sign-up message (members react with the casino emoji to join).
+void casino_post_signup(Ctx &ctx, uint64_t guild_id, uint64_t channel_id);
+// Redraws the live casino leaderboard of every guild that has one.
+void casino_refresh_leaderboards(Ctx &ctx);

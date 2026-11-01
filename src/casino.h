@@ -19,7 +19,8 @@ constexpr int kHandTimeoutSeconds = 4 * 60; // idle blackjack hand stands
 
 constexpr int kDailyTokens = 100;           // free tokens per claim
 constexpr int kDailySeconds = 24 * 60 * 60; // time between claims
-constexpr const char *kRoleName = "Gambler"; // created on /casino opt-in
+constexpr const char *kRoleName = "Gambling"; // created on first sign-up
+constexpr const char *kSignupEmoji = "🎰";   // react with this to join
 
 // ---- Slots ----------------------------------------------------------------
 
