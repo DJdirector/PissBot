@@ -6,15 +6,16 @@ A modular Discord bot written in C++ ([D++](https://github.com/brainboxdotcc/DPP
 
 ## Features
 
-| Module | What it does |
-| --- | --- |
-| Levels and XP | XP from chat and voice, ranks, live leaderboard, role rewards |
-| Social media posts | YouTube upload and live notifications |
-| Custom commands | Your own `!commands` with Nightbot-style `$(variables)` |
-| Answers | Auto-replies to plain messages like "hi" |
-| Moderation | Warn, timeout, kick, ban, purge, mod log |
-| Welcome and autorole | Greetings, goodbyes, role on join |
-| Role menus | Self-assign roles with buttons |
+| Module               | What it does                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| Levels and XP        | XP from chat and voice, ranks, live leaderboard, role rewards                        |
+| Social media posts   | YouTube upload and live notifications                                                |
+| Custom commands      | Your own `!commands` with Nightbot-style `$(variables)`                              |
+| Answers              | Auto-replies to plain messages like "hi"                                             |
+| Moderation           | Warn, timeout, kick, ban, purge, mod log                                             |
+| Welcome and autorole | Greetings, goodbyes, role on join                                                    |
+| Role menus           | Self-assign roles with buttons                                                       |
+| Casino               | Slots, roulette and blackjack with piss tokens, react-to-join role, live leaderboard |
 
 A guided `/setup` wizard picks the modules, and `/permissions` lets the server owner choose which roles can use what.
 
@@ -44,10 +45,10 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Tests labelled `unit` (template engine, database, answer matching) do not need D++ and build in seconds:
+Tests labelled `unit` (template engine, database, answer matching, casino rules) do not need D++ and build in seconds:
 
 ```bash
-cmake --build build --target template_test database_test answers_test
+cmake --build build --target template_test database_test answers_test casino_test
 ctest --test-dir build -L unit
 ```
 

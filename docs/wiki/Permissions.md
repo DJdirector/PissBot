@@ -18,17 +18,18 @@ The server owner decides which roles can use which parts of the bot with `/permi
 
 ## Features
 
-| Feature | Commands it controls |
-| --- | --- |
-| Setup wizard | `/setup` |
-| YouTube notifications | `/youtube` |
-| Level rewards | `/levelrole` `/levelrole_remove` |
-| Custom commands | `/command_add` `/command_remove` |
-| XP adjustments | `/add_xp` `/remove_xp` |
-| Answers (auto-replies) | `/answers` |
-| Moderation | `/warn` `/warnings` `/clearwarnings` `/timeout` `/untimeout` `/kick` `/ban` `/unban` `/purge` `/modlog` |
-| Welcome and autorole | `/welcome` |
-| Role menus | `/rolemenu` |
+| Feature                | Commands it controls                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| Setup wizard           | `/setup`                                                                                                |
+| YouTube notifications  | `/youtube`                                                                                              |
+| Level rewards          | `/levelrole` `/levelrole_remove`                                                                        |
+| Custom commands        | `/command_add` `/command_remove`                                                                        |
+| XP adjustments         | `/add_xp` `/remove_xp`                                                                                  |
+| Token adjustments      | `/tokens_add` `/tokens_remove` `/tokens_set`                                                            |
+| Answers (auto-replies) | `/answers`                                                                                              |
+| Moderation             | `/warn` `/warnings` `/clearwarnings` `/timeout` `/untimeout` `/kick` `/ban` `/unban` `/purge` `/modlog` |
+| Welcome and autorole   | `/welcome`                                                                                              |
+| Role menus             | `/rolemenu`                                                                                             |
 
 A role you allow can use the matching dashboards fully (add, edit and remove). Only grant a feature to roles you trust with it. For example, Custom commands and Answers let that role make the bot say things publicly.
 
@@ -36,7 +37,7 @@ A role you allow can use the matching dashboards fully (add, edit and remove). O
 
 These are not restricted by `/permissions`:
 
-`/ping` `/bot_status` `/xp` `/rank` `/xp_top` `/inspect_xp` `/levelrole_list` `/command_list` `/command_help` `/youtube_preview`, and using `!commands`, Answers and role menu buttons.
+`/ping` `/bot_status` `/xp` `/rank` `/xp_top` `/inspect_xp` `/levelrole_list` `/tokens` `/tokens_top` `/command_list` `/command_help` `/youtube_preview`, and using `!commands`, Answers and role menu buttons.
 
 ## Permissions are not Discord permissions
 

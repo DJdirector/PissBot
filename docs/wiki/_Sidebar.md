@@ -15,6 +15,7 @@
 - [Moderation](Moderation)
 - [Welcome and Autorole](Welcome-and-Autorole)
 - [Role Menus](Role-Menus)
+- [Casino](Casino)
 
 **Reference**
 
