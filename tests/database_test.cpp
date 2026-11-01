@@ -34,6 +34,37 @@ int main() {
     CHECK(top.size() == 2 && top[0].first == 11 && top[1].first == 10);
     CHECK(db.remove_xp(1, 10, 50));
     CHECK(db.get_xp(1, 10) == 450);
+    // spend_xp is all or nothing
+    CHECK(db.spend_xp(1, 10, 450));
+    CHECK(db.get_xp(1, 10) == 0);
+    CHECK(!db.spend_xp(1, 10, 1));
+    CHECK(!db.spend_xp(1, 12, 101)); // has 100
+    CHECK(db.get_xp(1, 12) == 100);
+    CHECK(!db.spend_xp(1, 12, 0) && !db.spend_xp(1, 12, -5));
+    CHECK(!db.spend_xp(1, 777, 1)); // unknown user
+    CHECK(db.add_xp(1, 10, 450));
+
+    // ---- piss tokens (separate from XP) ----
+    CHECK(db.token_balance(1, 10) == 0);
+    CHECK(db.token_add(1, 10, 100));
+    CHECK(db.token_add(1, 10, 50));
+    CHECK(db.token_balance(1, 10) == 150);
+    CHECK(db.get_xp(1, 10) == 450); // XP untouched
+    CHECK(db.token_spend(1, 10, 150));
+    CHECK(db.token_balance(1, 10) == 0);
+    CHECK(!db.token_spend(1, 10, 1) && !db.token_spend(1, 10, 0));
+    CHECK(!db.token_spend(1, 555, 1) && db.token_balance(2, 10) == 0);
+    // daily claim: pays once, then not until the cooldown has passed
+    CHECK(db.token_last_daily(1, 20) == 0);
+    CHECK(db.token_claim_daily(1, 20, 100, 1000000, 86400));
+    CHECK(db.token_balance(1, 20) == 100 && db.token_last_daily(1, 20) == 1000000);
+    CHECK(!db.token_claim_daily(1, 20, 100, 1000000 + 86399, 86400));
+    CHECK(db.token_balance(1, 20) == 100);
+    CHECK(db.token_claim_daily(1, 20, 100, 1000000 + 86400, 86400));
+    CHECK(db.token_balance(1, 20) == 200);
+    CHECK(db.token_add(1, 30, 5) && db.token_claim_daily(1, 30, 100, 2000000000, 86400));
+    CHECK(db.token_balance(1, 30) == 105); // claim works on an existing row
+
     CHECK(db.set_xp_leaderboard_channel(1, 42));
     CHECK(db.set_xp_leaderboard_channel(2, 0));
     auto lb = db.get_leaderboard_guilds();

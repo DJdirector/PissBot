@@ -2,9 +2,9 @@
 // Pure casino logic (no Discord, no database): payout tables, card handling and
 // hand serialization. The Discord side lives in modules/casino.cpp.
 //
-// Every game works the same way: the bet is taken from the player's XP up
-// front, and a win pays back `bet * multiplier` (the bet included). A
-// multiplier of 0 means the bet is lost.
+// Games are played with piss tokens, the casino's own currency (not XP). Every
+// game works the same way: the bet is taken up front, and a win pays back
+// `bet * multiplier` (the bet included). A multiplier of 0 means the bet is lost.
 #include <cstdint>
 #include <random>
 #include <string>
@@ -16,6 +16,10 @@ constexpr int kMinBet = 10;
 constexpr int kMaxBet = 200;
 constexpr int kCooldownSeconds = 5 * 60;   // between games, per player
 constexpr int kHandTimeoutSeconds = 4 * 60; // idle blackjack hand stands
+
+constexpr int kDailyTokens = 100;           // free tokens per claim
+constexpr int kDailySeconds = 24 * 60 * 60; // time between claims
+constexpr const char *kRoleName = "Gambler"; // created on /casino opt-in
 
 // ---- Slots ----------------------------------------------------------------
 
@@ -75,7 +79,7 @@ struct BlackjackGame {
   bool doubled = false;
   std::vector<int> player, dealer, deck; // deck draws from the back
 
-  int stake() const { return doubled ? bet * 2 : bet; } // XP put in so far
+  int stake() const { return doubled ? bet * 2 : bet; } // tokens put in so far
 };
 
 enum class BlackjackOutcome { Win, Loss, Push, Blackjack };

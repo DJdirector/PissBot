@@ -1,5 +1,7 @@
 #include "database.h"
 #include <iostream>
+#include <cstdint>
+#include <limits>
 
 Database::Database(const std::string &db_path) : db(nullptr), path(db_path) {}
 
@@ -56,6 +58,15 @@ bool Database::init() {
                           "xp INTEGER DEFAULT 0, "
                           "PRIMARY KEY (guild_id, user_id)"
                           ");";
+  
+  std::string create_tokens =
+      "CREATE TABLE IF NOT EXISTS token_accounts ("
+      "guild_id INTEGER NOT NULL, "
+      "user_id INTEGER NOT NULL, "
+      "balance INTEGER NOT NULL DEFAULT 0, "
+      "last_daily INTEGER NOT NULL DEFAULT 0, "
+      "PRIMARY KEY (guild_id, user_id)"
+      ");";
 
   std::string create_level_roles =
       "CREATE TABLE IF NOT EXISTS level_roles ("
@@ -108,7 +119,7 @@ bool Database::init() {
 
   if (!execute_query(create_guilds) || !execute_query(create_youtube) ||
       !execute_query(create_cache) || !execute_query(create_xp) ||
-      !execute_query(create_level_roles) ||
+      !execute_query(create_tokens) || !execute_query(create_level_roles) ||
       !execute_query(create_custom_cmds) || !execute_query(create_perms) ||
       !execute_query(create_answers) || !execute_query(create_modules) ||
       !execute_query(create_kv) || !execute_query(create_counters) ||
@@ -518,6 +529,143 @@ std::vector<uint64_t> Database::get_leaderboard_guilds() {
   }
   sqlite3_finalize(stmt);
   return guilds;
+}
+
+int64_t Database::token_balance(uint64_t guild_id, uint64_t user_id) {
+    sqlite3_stmt *stmt = nullptr;
+
+    const char *sql =
+        "SELECT balance FROM token_accounts "
+        "WHERE guild_id = ? AND user_id = ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return 0;
+
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+    sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(user_id));
+
+    int64_t balance = 0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        balance = sqlite3_column_int64(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return balance;
+}
+
+bool Database::token_add(uint64_t guild_id, uint64_t user_id,
+                         int64_t amount) {
+    if (amount <= 0)
+        return false;
+
+    sqlite3_stmt *stmt = nullptr;
+
+    const char *sql =
+        "INSERT INTO token_accounts (guild_id, user_id, balance) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(guild_id, user_id) DO UPDATE SET "
+        "balance = token_accounts.balance + excluded.balance "
+        "WHERE token_accounts.balance <= ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+    sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(user_id));
+    sqlite3_bind_int64(stmt, 3, amount);
+    sqlite3_bind_int64(stmt, 4, std::numeric_limits<int64_t>::max() - amount);
+
+    bool success =
+        sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) > 0;
+
+    sqlite3_finalize(stmt);
+    return success;
+}
+
+bool Database::token_spend(uint64_t guild_id, uint64_t user_id,
+                           int64_t amount) {
+    if (amount <= 0)
+        return false;
+
+    sqlite3_stmt *stmt = nullptr;
+
+    const char *sql =
+        "UPDATE token_accounts "
+        "SET balance = balance - ? "
+        "WHERE guild_id = ? AND user_id = ? AND balance >= ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+
+    sqlite3_bind_int64(stmt, 1, amount);
+    sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(guild_id));
+    sqlite3_bind_int64(stmt, 3, static_cast<sqlite3_int64>(user_id));
+    sqlite3_bind_int64(stmt, 4, amount);
+
+    bool success =
+        sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) > 0;
+
+    sqlite3_finalize(stmt);
+    return success;
+}
+
+int64_t Database::token_last_daily(uint64_t guild_id, uint64_t user_id) {
+    sqlite3_stmt *stmt = nullptr;
+
+    const char *sql =
+        "SELECT last_daily FROM token_accounts "
+        "WHERE guild_id = ? AND user_id = ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return 0;
+
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+    sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(user_id));
+
+    int64_t last_daily = 0;
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        last_daily = sqlite3_column_int64(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return last_daily;
+}
+
+bool Database::token_claim_daily(uint64_t guild_id, uint64_t user_id,
+                                 int64_t amount, int64_t now,
+                                 int64_t cooldown_seconds) {
+    if (amount <= 0 || now <= 0 || cooldown_seconds < 0)
+        return false;
+
+    sqlite3_stmt *stmt = nullptr;
+
+    const char *sql =
+        "INSERT INTO token_accounts "
+        "(guild_id, user_id, balance, last_daily) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(guild_id, user_id) DO UPDATE SET "
+        "balance = token_accounts.balance + excluded.balance, "
+        "last_daily = excluded.last_daily "
+        "WHERE token_accounts.last_daily <= ? "
+        "AND token_accounts.balance <= ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+    sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(user_id));
+    sqlite3_bind_int64(stmt, 3, amount);
+    sqlite3_bind_int64(stmt, 4, now);
+    sqlite3_bind_int64(stmt, 5, now - cooldown_seconds);
+    sqlite3_bind_int64(stmt, 6, std::numeric_limits<int64_t>::max() - amount);
+
+    bool success =
+        sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) > 0;
+
+    sqlite3_finalize(stmt);
+    return success;
 }
 
 bool Database::add_level_role(uint64_t guild_id, int level, uint64_t role_id) {
