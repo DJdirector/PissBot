@@ -1,11 +1,14 @@
-// Casino: slots, roulette and blackjack played with piss tokens. Members opt in
-// with /casino opt-in (which gives them the Gambler role) and claim 100 tokens
-// a day. The game rules and payouts are in casino.h; this file is the Discord
-// side (commands, buttons, cooldowns, and saving a blackjack hand so it
-// survives a bot restart).
+// Casino: slots, roulette and blackjack played with piss tokens. Members join
+// by reacting to the sign-up message (or /casino opt-in), which gives them the
+// Gambling role, and claim 100 tokens a day. Games only work in the casino
+// channel chosen in /setup, and a live leaderboard (separate from the XP one)
+// shows who holds the most tokens. The game rules and payouts are in casino.h;
+// this file is the Discord side (commands, buttons, cooldowns, reactions, and
+// saving a blackjack hand so it survives a bot restart).
 #include "casino.h"
 #include "module.h"
 #include <ctime>
+#include <functional>
 #include <mutex>
 #include <random>
 
@@ -14,7 +17,9 @@ namespace {
 using namespace casino;
 
 const uint32_t kGreen = 0x57F287, kRed = 0xED4245, kGrey = 0x99AAB5,
-               kBlue = 0x5865F2;
+               kBlue = 0x5865F2, kGold = 0xF1C40F;
+
+constexpr int64_t kMaxAdminTokens = 1000000000;
 
 // Every casino action runs under this lock, so balance checks, payouts and
 // the saved blackjack hand can't interleave between two clicks.
@@ -208,10 +213,13 @@ std::string try_start(Ctx &ctx, uint64_t guild, uint64_t user, int64_t bet) {
 
 std::string rules_text() {
   std::string t = "**Casino rules**\n";
-  t += "Opt in with `/casino opt-in` to get the " + std::string(kRoleName) +
-       " role, then claim **" + std::to_string(kDailyTokens) +
+  t += "React with " + std::string(kSignupEmoji) +
+       " to the casino sign-up message to get the " + std::string(kRoleName) +
+       " role (`/casino opt-in` works too), then claim **" +
+       std::to_string(kDailyTokens) +
        "** piss tokens every day with `/casino daily`. Games are played with "
-       "piss tokens, not XP.\n";
+       "piss tokens, not XP, in the casino channel. `/tokens` shows a balance "
+       "and `/tokens_top` the richest gamblers.\n";
   t += "Bets are " + std::to_string(kMinBet) + " to " + std::to_string(kMaxBet) +
        " piss tokens. One game every " + std::to_string(kCooldownSeconds / 60) +
        " minutes, whichever game you pick.\n\n";
@@ -256,8 +264,10 @@ bool has_gambler_role(Database &db, const dpp::interaction &cmd) {
   return false;
 }
 
-const char *kNeedOptIn =
-    "You need to opt in first. Use `/casino opt-in` to join the casino.";
+const std::string kNeedOptIn =
+    "You need to join the casino first. React with " +
+    std::string(kSignupEmoji) +
+    " to the sign-up message, or use `/casino opt-in`.";
 
 std::string next_daily_text(int64_t last) {
   return "You already claimed today. Come back <t:" +
@@ -272,11 +282,92 @@ std::string claim_daily(Database &db, uint64_t guild, uint64_t user) {
   return next_daily_text(db.token_last_daily(guild, user));
 }
 
-// Gives the member the Gambler role (creating it the first time), then
-// replies. This runs asynchronously, so it only captures things that outlive
-// the command (the bot and the database), never the Ctx.
+// ---- Channels, the sign-up message and the leaderboard ------------------------
+
+const char *kCasinoChannelKey = "casino_channel"; // games only work here
+const char *kLbChannelKey = "casino_lb_channel";  // live leaderboard channel
+const char *kLbMessageKey = "casino_lb_msg";      // the leaderboard message
+const char *kSignupKey = "casino_signup";         // "channel:message"
+
+uint64_t kv_id(Database &db, uint64_t guild, const std::string &key) {
+  std::string v = db.kv_get(guild, key);
+  if (v.empty())
+    return 0;
+  try {
+    return std::stoull(v);
+  } catch (...) {
+    return 0;
+  }
+}
+
+// "" when games may be played in `channel`, otherwise where to go instead.
+std::string wrong_channel(Database &db, uint64_t guild, uint64_t channel) {
+  uint64_t only = kv_id(db, guild, kCasinoChannelKey);
+  if (only == 0 || only == channel)
+    return "";
+  return "🎰 Games are played in <#" + str(only) + ">.";
+}
+
+bool is_signup_message(Database &db, uint64_t guild, uint64_t message) {
+  std::string v = db.kv_get(guild, kSignupKey);
+  size_t colon = v.find(':');
+  if (colon == std::string::npos)
+    return false;
+  try {
+    return std::stoull(v.substr(colon + 1)) == message;
+  } catch (...) {
+    return false;
+  }
+}
+
+// Calls use(role_id) with the casino role, creating it the first time, or
+// fail() when it can't be created. The callbacks may run on another thread, so
+// they only capture things that outlive the call (the bot and the database).
+void with_role(dpp::cluster &bot, Database &db, uint64_t guild,
+               std::function<void(uint64_t)> use, std::function<void()> fail) {
+  uint64_t role = configured_role(db, guild);
+  if (role != 0 && dpp::find_role(role)) {
+    use(role);
+    return;
+  }
+  dpp::role fresh;
+  fresh.set_guild_id(guild).set_name(kRoleName);
+  bot.role_create(fresh, [&db, guild, use,
+                          fail](const dpp::confirmation_callback_t &cb) {
+    if (cb.is_error()) {
+      fail();
+      return;
+    }
+    uint64_t role_id = std::get<dpp::role>(cb.value).id;
+    db.kv_set(guild, "casino_role", str(role_id));
+    use(role_id);
+  });
+}
+
+// Gives the member the casino role, records them as a member and pays their
+// first daily tokens. done(ok, paid) runs afterwards; ok is false when the role
+// couldn't be set up or given.
+void join_casino(dpp::cluster &bot, Database &db, uint64_t guild, uint64_t user,
+                 std::function<void(bool, bool)> done) {
+  with_role(
+      bot, db, guild,
+      [&bot, &db, guild, user, done](uint64_t role_id) {
+        bot.guild_member_add_role(
+            guild, user, role_id,
+            [&db, guild, user, done](const dpp::confirmation_callback_t &cb) {
+              if (cb.is_error()) {
+                done(false, false);
+                return;
+              }
+              db.casino_member_add(guild, user, now_s());
+              done(true, claim_daily(db, guild, user).empty());
+            });
+      },
+      [done] { done(false, false); });
+}
+
+// /casino opt-in: the same as reacting to the sign-up message.
 void opt_in(Ctx &ctx, const dpp::slashcommand_t &event) {
-  dpp::cluster &bot = ctx.bot;
   Database &db = ctx.db;
   const uint64_t guild = event.command.guild_id;
   const uint64_t user = event.command.usr.id;
@@ -293,45 +384,21 @@ void opt_in(Ctx &ctx, const dpp::slashcommand_t &event) {
       " role. An admin needs to give me the Manage Roles permission, or pick "
       "an existing role with `/casino role`.";
 
-  auto give_role = [&bot, &db, event, guild, user,
-                    role_problem](uint64_t role_id) {
-    bot.guild_member_add_role(
-        guild, user, role_id,
-        [&db, event, guild, user,
-         role_problem](const dpp::confirmation_callback_t &cb) {
-          if (cb.is_error()) {
-            event.edit_original_response(dpp::message(role_problem));
-            return;
-          }
-          std::string text = "🎰 Welcome to the casino! You now have the " +
-                             std::string(kRoleName) + " role.";
-          if (claim_daily(db, guild, user).empty())
-            text += "\nHere are your first " + std::to_string(kDailyTokens) +
-                    " piss tokens.";
-          text += "\nBalance: " + tokens(db.token_balance(guild, user)) +
-                  "\nUse `/casino rules` to see how the games pay.";
-          event.edit_original_response(dpp::message(text));
-        });
-  };
-
-  uint64_t role = configured_role(db, guild);
-  if (role != 0 && dpp::find_role(role)) {
-    give_role(role);
-    return;
-  }
-
-  dpp::role fresh;
-  fresh.set_guild_id(guild).set_name(kRoleName);
-  bot.role_create(fresh, [&db, event, guild, give_role,
-                          role_problem](const dpp::confirmation_callback_t &cb) {
-    if (cb.is_error()) {
-      event.edit_original_response(dpp::message(role_problem));
-      return;
-    }
-    uint64_t role_id = std::get<dpp::role>(cb.value).id;
-    db.kv_set(guild, "casino_role", str(role_id));
-    give_role(role_id);
-  });
+  join_casino(ctx.bot, db, guild, user,
+              [&db, event, guild, user, role_problem](bool ok, bool paid) {
+                if (!ok) {
+                  event.edit_original_response(dpp::message(role_problem));
+                  return;
+                }
+                std::string text = "🎰 Welcome to the casino! You now have the " +
+                                   std::string(kRoleName) + " role.";
+                if (paid)
+                  text += "\nHere are your first " +
+                          std::to_string(kDailyTokens) + " piss tokens.";
+                text += "\nBalance: " + tokens(db.token_balance(guild, user)) +
+                        "\nUse `/casino rules` to see how the games pay.";
+                event.edit_original_response(dpp::message(text));
+              });
 }
 
 void opt_out(Ctx &ctx, const dpp::slashcommand_t &event) {
@@ -340,16 +407,80 @@ void opt_out(Ctx &ctx, const dpp::slashcommand_t &event) {
     return;
   }
   event.thinking(true);
+  Database &db = ctx.db;
+  const uint64_t guild = event.command.guild_id;
+  const uint64_t user = event.command.usr.id;
   ctx.bot.guild_member_remove_role(
-      event.command.guild_id, event.command.usr.id,
-      configured_role(ctx.db, event.command.guild_id),
-      [event](const dpp::confirmation_callback_t &cb) {
+      guild, user, configured_role(db, guild),
+      [&db, event, guild, user](const dpp::confirmation_callback_t &cb) {
+        if (!cb.is_error())
+          db.casino_member_remove(guild, user);
         event.edit_original_response(dpp::message(
             cb.is_error()
                 ? "I couldn't remove the role. An admin needs to check that my "
                   "role sits above it."
                 : "You left the casino. Your piss tokens are kept if you come "
-                  "back with `/casino opt-in`."));
+                  "back."));
+      });
+}
+
+dpp::embed leaderboard_embed(Database &db, uint64_t guild, bool live) {
+  std::string text;
+  int rank = 1;
+  for (const auto &[user, balance] : db.token_top(guild, 10))
+    text += "**#" + std::to_string(rank++) + "** <@" + str(user) + "> — **" +
+            std::to_string(balance) + "** piss tokens\n";
+  std::string footer = std::to_string(db.casino_member_count(guild)) +
+                       " gamblers";
+  if (live)
+    footer = "Auto-updates every 5 minutes • " + footer;
+  dpp::embed e;
+  e.set_color(kGold)
+      .set_title("🎰 Casino Leaderboard")
+      .set_description(text.empty() ? "Nobody has any piss tokens yet!" : text)
+      .set_footer(dpp::embed_footer().set_text(footer));
+  return e;
+}
+
+// Edits the leaderboard message in place, or posts a new one when there is
+// none yet (or the old one was deleted).
+void refresh_leaderboard(dpp::cluster &bot, Database &db, uint64_t guild) {
+  const uint64_t channel = kv_id(db, guild, kLbChannelKey);
+  if (channel == 0 || !module_enabled(db, guild, "casino"))
+    return;
+  dpp::embed embed = leaderboard_embed(db, guild, true);
+
+  auto post_new = [&bot, &db, guild, channel, embed] {
+    bot.message_create(
+        dpp::message(channel, embed),
+        [&bot, &db, guild, channel](const dpp::confirmation_callback_t &cb) {
+          if (cb.is_error()) {
+            log_send_failure(bot, channel, "the casino leaderboard", cb);
+            return;
+          }
+          db.kv_set(guild, kLbMessageKey,
+                    str(std::get<dpp::message>(cb.value).id));
+        });
+  };
+
+  const uint64_t last = kv_id(db, guild, kLbMessageKey);
+  if (last == 0) {
+    post_new();
+    return;
+  }
+  dpp::message msg(channel, embed);
+  msg.id = last;
+  bot.message_edit(
+      msg, [&bot, channel, post_new](const dpp::confirmation_callback_t &cb) {
+        if (!cb.is_error())
+          return;
+        int code = cb.get_error().code;
+        if (code == 50013 || code == 50001) {
+          // A permissions problem: a new message would fail the same way.
+          log_send_failure(bot, channel, "the casino leaderboard", cb);
+          return;
+        }
+        post_new();
       });
 }
 
@@ -417,6 +548,30 @@ public:
         dpp::co_role, "role", "The role to use for the casino", true));
     cs.add_option(role);
     v.push_back(cs);
+
+    dpp::slashcommand tk("tokens", "Check your piss tokens or another member's", a);
+    tk.add_option(dpp::command_option(
+        dpp::co_user, "user", "Member to check (default: you)", false));
+    v.push_back(tk);
+    v.emplace_back("tokens_top", "Show the members with the most piss tokens", a);
+
+    auto admin_cmd = [&](const char *name, const char *desc,
+                         const char *amount_desc, int64_t min_amount) {
+      dpp::slashcommand c(name, desc, a);
+      c.add_option(
+          dpp::command_option(dpp::co_user, "user", "Target member", true));
+      c.add_option(dpp::command_option(dpp::co_integer, "amount", amount_desc,
+                                       true)
+                       .set_min_value(min_amount)
+                       .set_max_value(kMaxAdminTokens));
+      v.push_back(c);
+    };
+    admin_cmd("tokens_add", "Give piss tokens to a member (Admin)",
+              "How many piss tokens to add", 1);
+    admin_cmd("tokens_remove", "Take piss tokens from a member (Admin)",
+              "How many piss tokens to remove", 1);
+    admin_cmd("tokens_set", "Set a member's piss token balance (Admin)",
+              "The new balance", 0);
     return v;
   }
 
@@ -426,11 +581,22 @@ public:
       handle_casino(ctx, event);
       return true;
     }
+    if (cmd == "tokens" || cmd == "tokens_top" || cmd == "tokens_add" ||
+        cmd == "tokens_remove" || cmd == "tokens_set") {
+      handle_tokens(ctx, event, cmd);
+      return true;
+    }
     if (cmd != "blackjack" && cmd != "roulette" && cmd != "slots")
       return false;
 
     if (!has_gambler_role(ctx.db, event.command)) {
       event.reply(ephemeral_text(kNeedOptIn));
+      return true;
+    }
+    std::string elsewhere = wrong_channel(ctx.db, event.command.guild_id,
+                                          event.command.channel_id);
+    if (!elsewhere.empty()) {
+      event.reply(ephemeral_text(elsewhere));
       return true;
     }
 
@@ -564,7 +730,128 @@ public:
     return true;
   }
 
+  void on_reaction_add(Ctx &ctx, const dpp::message_reaction_add_t &e) override {
+    const uint64_t guild = e.reacting_guild.id;
+    if (!is_signup_message(ctx.db, guild, e.message_id))
+      return;
+    if (e.reacting_user.id == ctx.bot.me.id || e.reacting_user.is_bot())
+      return;
+    if (e.reacting_emoji.name != kSignupEmoji) {
+      // Only the casino emoji belongs on the sign-up message. Needs Manage
+      // Messages; without it the stray reaction just stays.
+      ctx.bot.message_delete_reaction(
+          e.message_id, e.channel_id, e.reacting_user.id,
+          e.reacting_emoji.format(), [](const dpp::confirmation_callback_t &) {});
+      return;
+    }
+    join_casino(ctx.bot, ctx.db, guild, e.reacting_user.id, [](bool, bool) {});
+  }
+
+  void on_reaction_remove(Ctx &ctx,
+                          const dpp::message_reaction_remove_t &e) override {
+    const uint64_t guild = e.reacting_guild.id;
+    const uint64_t user = e.reacting_user_id;
+    if (!is_signup_message(ctx.db, guild, e.message_id) ||
+        e.reacting_emoji.name != kSignupEmoji || user == ctx.bot.me.id)
+      return;
+    const uint64_t role = configured_role(ctx.db, guild);
+    if (role == 0)
+      return;
+    // Taking the reaction back leaves the casino. Tokens are kept.
+    Database &db = ctx.db;
+    ctx.bot.guild_member_remove_role(
+        guild, user, role,
+        [&db, guild, user](const dpp::confirmation_callback_t &cb) {
+          if (!cb.is_error())
+            db.casino_member_remove(guild, user);
+        });
+  }
+
 private:
+  // /tokens and /tokens_top for everyone, /tokens_add /tokens_remove
+  // /tokens_set for admins (the "tokens" feature in /permissions).
+  void handle_tokens(Ctx &ctx, const dpp::slashcommand_t &event,
+                     const std::string &cmd) {
+    Database &db = ctx.db;
+    const uint64_t guild = event.command.guild_id;
+    const uint64_t user = event.command.usr.id;
+
+    if (cmd == "tokens_top") {
+      dpp::message m;
+      m.add_embed(leaderboard_embed(db, guild, false));
+      event.reply(m);
+      return;
+    }
+
+    if (cmd == "tokens") {
+      uint64_t target = user;
+      auto param = event.get_parameter("user");
+      if (std::holds_alternative<dpp::snowflake>(param))
+        target = std::get<dpp::snowflake>(param);
+
+      std::lock_guard<std::mutex> lock(g_mutex);
+      const int64_t balance = db.token_balance(guild, target);
+      const int rank = db.token_rank(guild, target);
+      if (target != user) {
+        dpp::message m("<@" + str(target) + "> has " + tokens(balance) +
+                       (rank > 0 ? " (rank #" + std::to_string(rank) + ")" : "") +
+                       ".");
+        m.set_allowed_mentions(false, false, false, false);
+        event.reply(m);
+        return;
+      }
+      std::string text = "You have " + tokens(balance) +
+                         (rank > 0 ? " (rank #" + std::to_string(rank) + ")" : "") +
+                         ".";
+      if (!has_gambler_role(db, event.command)) {
+        text += "\n" + kNeedOptIn;
+      } else {
+        int64_t next = db.token_last_daily(guild, user) + kDailySeconds;
+        text += next <= now_s() ? "\nYour daily tokens are ready: `/casino daily`."
+                                : "\nYour next daily tokens: <t:" +
+                                      std::to_string(next) + ":R>.";
+      }
+      event.reply(ephemeral_text(text));
+      return;
+    }
+
+    if (!has_access(db, event.command, "tokens")) {
+      event.reply(no_permission_message());
+      return;
+    }
+    const uint64_t target = std::get<dpp::snowflake>(event.get_parameter("user"));
+    const int64_t amount = std::get<int64_t>(event.get_parameter("amount"));
+    const std::string who = "<@" + str(target) + ">";
+    std::string text;
+
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (cmd == "tokens_add") {
+      if (!db.token_add(guild, target, amount)) {
+        event.reply(ephemeral_text("Couldn't add the tokens."));
+        return;
+      }
+      text = "Added " + tokens(amount) + " to " + who + ".";
+    } else if (cmd == "tokens_remove") {
+      const int64_t taken = db.token_take(guild, target, amount);
+      if (taken == 0) {
+        event.reply(ephemeral_text(who + " has no piss tokens to remove."));
+        return;
+      }
+      text = "Removed " + tokens(taken) + " from " + who +
+             (taken < amount ? " (everything they had)." : ".");
+    } else {
+      if (!db.token_set(guild, target, amount)) {
+        event.reply(ephemeral_text("Couldn't set the balance."));
+        return;
+      }
+      text = "Set " + who + "'s balance to " + tokens(amount) + ".";
+    }
+    text += "\nNew balance: " + tokens(db.token_balance(guild, target));
+    dpp::message m(text);
+    m.set_allowed_mentions(false, false, false, false);
+    event.reply(m);
+  }
+
   void handle_casino(Ctx &ctx, const dpp::slashcommand_t &event) {
     const auto &data = event.command.get_command_interaction();
     const std::string sub = data.options.empty() ? "" : data.options[0].name;
@@ -616,6 +903,80 @@ private:
 };
 
 } // namespace
+
+void casino_set_channel(Ctx &ctx, uint64_t guild_id, uint64_t channel_id) {
+  ctx.db.kv_set(guild_id, kCasinoChannelKey, str(channel_id));
+  send_message_logged(
+      ctx.bot,
+      dpp::message(
+          channel_id,
+          "🎰 **Welcome to the casino!**\n"
+          "`/slots`, `/roulette` and `/blackjack` only work in this channel, "
+          "so the other chats stay quiet.\n"
+          "• `/casino rules` shows how the games pay\n"
+          "• `/casino daily` gives you " + std::to_string(kDailyTokens) +
+          " piss tokens a day\n"
+          "• `/tokens` shows your balance, `/tokens_top` the richest gamblers\n"
+          "To join, react to the sign-up message to get the " +
+          std::string(kRoleName) + " role."),
+      "the casino guide");
+}
+
+void casino_set_leaderboard_channel(Ctx &ctx, uint64_t guild_id,
+                                    uint64_t channel_id) {
+  ctx.db.kv_set(guild_id, kLbChannelKey, str(channel_id));
+  ctx.db.kv_set(guild_id, kLbMessageKey, ""); // the old message is elsewhere
+  refresh_leaderboard(ctx.bot, ctx.db, guild_id);
+}
+
+void casino_post_signup(Ctx &ctx, uint64_t guild_id, uint64_t channel_id) {
+  dpp::cluster &bot = ctx.bot;
+  Database &db = ctx.db;
+
+  // Create the role now, so two quick reactions can't each create one.
+  with_role(bot, db, guild_id, [](uint64_t) {}, [] {});
+
+  const uint64_t casino_channel = kv_id(db, guild_id, kCasinoChannelKey);
+  const std::string where = casino_channel != 0
+                                ? "<#" + str(casino_channel) + ">"
+                                : "the casino channel";
+  const std::string text =
+      "Hello Gamblers! React to this message with " +
+      std::string(kSignupEmoji) + " to receive the " + kRoleName +
+      " role. This will grant you " + std::to_string(kDailyTokens) +
+      " piss tokens per day, and you can then use them in " + where + ".";
+
+  const std::string old = db.kv_get(guild_id, kSignupKey);
+  bot.message_create(
+      dpp::message(channel_id, text),
+      [&bot, &db, guild_id, channel_id,
+       old](const dpp::confirmation_callback_t &cb) {
+        if (cb.is_error()) {
+          log_send_failure(bot, channel_id, "the casino sign-up message", cb);
+          return;
+        }
+        auto created = std::get<dpp::message>(cb.value);
+        db.kv_set(guild_id, kSignupKey,
+                  str(channel_id) + ":" + str(created.id));
+        bot.message_add_reaction(created, kSignupEmoji);
+
+        // Replace the previous sign-up message, if there was one.
+        size_t colon = old.find(':');
+        if (colon != std::string::npos) {
+          try {
+            bot.message_delete(std::stoull(old.substr(colon + 1)),
+                               std::stoull(old.substr(0, colon)),
+                               [](const dpp::confirmation_callback_t &) {});
+          } catch (...) {
+          }
+        }
+      });
+}
+
+void casino_refresh_leaderboards(Ctx &ctx) {
+  for (uint64_t guild : ctx.db.kv_guilds(kLbChannelKey))
+    refresh_leaderboard(ctx.bot, ctx.db, guild);
+}
 
 std::unique_ptr<Module> make_casino_module() {
   return std::make_unique<CasinoModule>();

@@ -1,4 +1,5 @@
 #include "database.h"
+#include <algorithm>
 #include <iostream>
 #include <cstdint>
 #include <limits>
@@ -68,6 +69,14 @@ bool Database::init() {
       "PRIMARY KEY (guild_id, user_id)"
       ");";
 
+  std::string create_casino_members =
+      "CREATE TABLE IF NOT EXISTS casino_members ("
+      "guild_id INTEGER NOT NULL, "
+      "user_id INTEGER NOT NULL, "
+      "joined_at INTEGER NOT NULL DEFAULT 0, "
+      "PRIMARY KEY (guild_id, user_id)"
+      ");";
+
   std::string create_level_roles =
       "CREATE TABLE IF NOT EXISTS level_roles ("
       "guild_id INTEGER, "
@@ -119,7 +128,9 @@ bool Database::init() {
 
   if (!execute_query(create_guilds) || !execute_query(create_youtube) ||
       !execute_query(create_cache) || !execute_query(create_xp) ||
-      !execute_query(create_tokens) || !execute_query(create_level_roles) ||
+      !execute_query(create_tokens) ||
+      !execute_query(create_casino_members) ||
+      !execute_query(create_level_roles) ||
       !execute_query(create_custom_cmds) || !execute_query(create_perms) ||
       !execute_query(create_answers) || !execute_query(create_modules) ||
       !execute_query(create_kv) || !execute_query(create_counters) ||
@@ -668,6 +679,120 @@ bool Database::token_claim_daily(uint64_t guild_id, uint64_t user_id,
     return success;
 }
 
+bool Database::token_set(uint64_t guild_id, uint64_t user_id, int64_t amount) {
+  if (amount < 0)
+    return false;
+  sqlite3_stmt *stmt = nullptr;
+  const char *sql =
+      "INSERT INTO token_accounts (guild_id, user_id, balance) "
+      "VALUES (?, ?, ?) "
+      "ON CONFLICT(guild_id, user_id) DO UPDATE SET "
+      "balance = excluded.balance;";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+    return false;
+  sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+  sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(user_id));
+  sqlite3_bind_int64(stmt, 3, amount);
+  bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
+int64_t Database::token_take(uint64_t guild_id, uint64_t user_id,
+                             int64_t amount) {
+  if (amount <= 0)
+    return 0;
+  // token_spend is all or nothing, so retry if the balance changed under us.
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    int64_t take = std::min(amount, token_balance(guild_id, user_id));
+    if (take <= 0)
+      return 0;
+    if (token_spend(guild_id, user_id, take))
+      return take;
+  }
+  return 0;
+}
+
+std::vector<std::pair<uint64_t, int64_t>> Database::token_top(uint64_t guild_id,
+                                                              int limit) {
+  std::vector<std::pair<uint64_t, int64_t>> out;
+  sqlite3_stmt *stmt = nullptr;
+  const char *sql =
+      "SELECT user_id, balance FROM token_accounts "
+      "WHERE guild_id = ? AND balance > 0 "
+      "ORDER BY balance DESC, user_id ASC LIMIT ?;";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+    sqlite3_bind_int(stmt, 2, limit);
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+      out.emplace_back(static_cast<uint64_t>(sqlite3_column_int64(stmt, 0)),
+                       sqlite3_column_int64(stmt, 1));
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+int Database::token_rank(uint64_t guild_id, uint64_t user_id) {
+  int64_t mine = token_balance(guild_id, user_id);
+  if (mine <= 0)
+    return 0;
+  int rank = 0;
+  sqlite3_stmt *stmt = nullptr;
+  const char *sql =
+      "SELECT COUNT(*) + 1 FROM token_accounts "
+      "WHERE guild_id = ? AND balance > ?;";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+    sqlite3_bind_int64(stmt, 2, mine);
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+      rank = sqlite3_column_int(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return rank;
+}
+
+bool Database::casino_member_add(uint64_t guild_id, uint64_t user_id,
+                                 int64_t now) {
+  sqlite3_stmt *stmt = nullptr;
+  const char *sql =
+      "INSERT INTO casino_members (guild_id, user_id, joined_at) "
+      "VALUES (?, ?, ?) ON CONFLICT(guild_id, user_id) DO NOTHING;";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+    return false;
+  sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+  sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(user_id));
+  sqlite3_bind_int64(stmt, 3, now);
+  bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
+bool Database::casino_member_remove(uint64_t guild_id, uint64_t user_id) {
+  sqlite3_stmt *stmt = nullptr;
+  const char *sql =
+      "DELETE FROM casino_members WHERE guild_id = ? AND user_id = ?;";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+    return false;
+  sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+  sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(user_id));
+  bool ok = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) > 0;
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
+int Database::casino_member_count(uint64_t guild_id) {
+  int n = 0;
+  sqlite3_stmt *stmt = nullptr;
+  const char *sql = "SELECT COUNT(*) FROM casino_members WHERE guild_id = ?;";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+    sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(guild_id));
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+      n = sqlite3_column_int(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return n;
+}
+
 bool Database::add_level_role(uint64_t guild_id, int level, uint64_t role_id) {
   sqlite3_stmt *stmt;
   std::string sql =
@@ -963,6 +1088,20 @@ bool Database::kv_set(uint64_t guild_id, const std::string &key,
   bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
   sqlite3_finalize(stmt);
   return ok;
+}
+
+std::vector<uint64_t> Database::kv_guilds(const std::string &key) {
+  std::vector<uint64_t> out;
+  sqlite3_stmt *stmt = nullptr;
+  const char *sql =
+      "SELECT DISTINCT guild_id FROM guild_kv WHERE key = ? AND value != '';";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+      out.push_back(static_cast<uint64_t>(sqlite3_column_int64(stmt, 0)));
+  }
+  sqlite3_finalize(stmt);
+  return out;
 }
 
 long long Database::incr_counter(uint64_t guild_id, const std::string &key) {

@@ -121,7 +121,9 @@ std::string channel_access_report(dpp::cluster &bot, Database &db,
       {"Notifications", db.get_notification_channel(guild_id)},
       {"XP leaderboard", db.get_xp_leaderboard_channel(guild_id)},
       {"Welcome messages", kv_id("welcome_channel")},
-      {"Mod log", kv_id("modlog_channel")}};
+      {"Mod log", kv_id("modlog_channel")},
+      {"Casino games", kv_id("casino_channel")},
+      {"Casino leaderboard", kv_id("casino_lb_channel")}};
 
   std::string out;
   for (const auto &e : entries) {

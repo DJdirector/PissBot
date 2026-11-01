@@ -89,6 +89,21 @@ public:
                          int64_t now, int64_t cooldown_seconds);
   // Unix time of the last daily claim (0 = never).
   int64_t token_last_daily(uint64_t guild_id, uint64_t user_id);
+  // Admin helpers. token_set replaces the balance (amount >= 0).
+  bool token_set(uint64_t guild_id, uint64_t user_id, int64_t amount);
+  // Takes up to `amount` tokens and never goes below zero. Returns how many
+  // were actually taken (0 when the user had none).
+  int64_t token_take(uint64_t guild_id, uint64_t user_id, int64_t amount);
+  // Highest balances first (accounts with 0 tokens are left out).
+  std::vector<std::pair<uint64_t, int64_t>> token_top(uint64_t guild_id,
+                                                      int limit = 10);
+  // 1 = richest. 0 when the user has no tokens.
+  int token_rank(uint64_t guild_id, uint64_t user_id);
+
+  // Members who joined the casino by reacting to the sign-up message
+  bool casino_member_add(uint64_t guild_id, uint64_t user_id, int64_t now);
+  bool casino_member_remove(uint64_t guild_id, uint64_t user_id);
+  int casino_member_count(uint64_t guild_id);
 
   // Level Role Rewards
   bool add_level_role(uint64_t guild_id, int level, uint64_t role_id);
@@ -123,6 +138,8 @@ public:
   std::string kv_get(uint64_t guild_id, const std::string &key);
   bool kv_set(uint64_t guild_id, const std::string &key,
               const std::string &value);
+  // Guilds that have a non-empty value stored under `key`.
+  std::vector<uint64_t> kv_guilds(const std::string &key);
 
   // Auto-incrementing counters ($(count))
   long long incr_counter(uint64_t guild_id, const std::string &key);

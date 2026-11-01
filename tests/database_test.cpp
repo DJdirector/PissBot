@@ -65,6 +65,42 @@ int main() {
     CHECK(db.token_add(1, 30, 5) && db.token_claim_daily(1, 30, 100, 2000000000, 86400));
     CHECK(db.token_balance(1, 30) == 105); // claim works on an existing row
 
+    // ---- token admin helpers, leaderboard and casino members ----
+    CHECK(db.token_set(1, 40, 500) && db.token_balance(1, 40) == 500);
+    CHECK(db.token_set(1, 40, 0) && db.token_balance(1, 40) == 0);
+    CHECK(!db.token_set(1, 40, -1));
+    CHECK(db.token_set(1, 41, 70)); // set creates the account too
+    CHECK(db.token_take(1, 41, 30) == 30 && db.token_balance(1, 41) == 40);
+    CHECK(db.token_take(1, 41, 1000) == 40 && db.token_balance(1, 41) == 0);
+    CHECK(db.token_take(1, 41, 5) == 0 && db.token_take(1, 41, 0) == 0);
+    CHECK(db.token_take(1, 999, 5) == 0); // unknown user
+
+    // Balances so far in guild 1: user 20 = 200, user 30 = 105, others 0.
+    auto rich = db.token_top(1, 10);
+    CHECK(rich.size() == 2); // zero balances are left out
+    CHECK(rich[0].first == 20 && rich[0].second == 200);
+    CHECK(rich[1].first == 30 && rich[1].second == 105);
+    CHECK(db.token_top(1, 1).size() == 1);
+    CHECK(db.token_top(2, 10).empty()); // other guilds are separate
+    CHECK(db.token_rank(1, 20) == 1 && db.token_rank(1, 30) == 2);
+    CHECK(db.token_rank(1, 41) == 0 && db.token_rank(2, 20) == 0);
+
+    CHECK(db.casino_member_count(1) == 0);
+    CHECK(db.casino_member_add(1, 20, 1000) && db.casino_member_add(1, 30, 1001));
+    CHECK(db.casino_member_add(1, 20, 2000)); // joining twice is harmless
+    CHECK(db.casino_member_count(1) == 2 && db.casino_member_count(2) == 0);
+    CHECK(db.casino_member_remove(1, 20) && !db.casino_member_remove(1, 20));
+    CHECK(db.casino_member_count(1) == 1);
+
+    CHECK(db.kv_guilds("casino_lb_channel").empty());
+    CHECK(db.kv_set(7, "casino_lb_channel", "123") &&
+          db.kv_set(8, "casino_lb_channel", "456") &&
+          db.kv_set(9, "other_key", "1"));
+    CHECK(db.kv_guilds("casino_lb_channel").size() == 2);
+    CHECK(db.kv_set(7, "casino_lb_channel", ""));
+    CHECK(db.kv_guilds("casino_lb_channel").size() == 1 &&
+          db.kv_guilds("casino_lb_channel")[0] == 8);
+
     CHECK(db.set_xp_leaderboard_channel(1, 42));
     CHECK(db.set_xp_leaderboard_channel(2, 0));
     auto lb = db.get_leaderboard_guilds();
