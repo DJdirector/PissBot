@@ -3,7 +3,7 @@
 // Gambling role, and claim 100 tokens a day. Games only work in the casino
 // channel chosen in /setup, and a live leaderboard (separate from the XP one)
 // shows who holds the most tokens. The game rules and payouts are in casino.h;
-// this file is the Discord side (commands, buttons, cooldowns, reactions, and
+// this file is the Discord side (commands, buttons, daily game cap, reactions, and
 // saving a blackjack hand so it survives a bot restart).
 #include "casino.h"
 #include "module.h"
@@ -37,7 +37,28 @@ std::mt19937 &rng() {
 int64_t now_s() { return static_cast<int64_t>(std::time(nullptr)); }
 std::string str(uint64_t v) { return std::to_string(v); }
 
-std::string cooldown_key(uint64_t user) { return "casino_cd_" + str(user); }
+std::string games_key(uint64_t user) { return "casino_games_" + str(user); }
+
+// Games played today (UTC day) by this player, stored as "day:count".
+int games_today(Ctx &ctx, uint64_t guild, uint64_t user) {
+  std::string raw = ctx.db.kv_get(guild, games_key(user));
+  size_t colon = raw.find(':');
+  if (colon == std::string::npos)
+    return 0;
+  try {
+    if (std::stoll(raw.substr(0, colon)) != now_s() / 86400)
+      return 0;
+    return std::stoi(raw.substr(colon + 1));
+  } catch (...) {
+    return 0;
+  }
+}
+
+void count_game(Ctx &ctx, uint64_t guild, uint64_t user, int played) {
+  ctx.db.kv_set(guild, games_key(user),
+                std::to_string(now_s() / 86400) + ":" +
+                    std::to_string(played + 1));
+}
 std::string hand_key(uint64_t user) { return "casino_bj_" + str(user); }
 
 dpp::message embed_message(const std::string &title, const std::string &body,
@@ -179,7 +200,7 @@ void settle_stale_hand(Ctx &ctx, uint64_t guild, uint64_t user) {
 
 // ---- Starting a game ---------------------------------------------------------
 
-// "" = the bet is taken and the cooldown has started; otherwise the reason the
+// "" = the bet is taken and the game is counted; otherwise the reason the
 // player can't play right now.
 std::string try_start(Ctx &ctx, uint64_t guild, uint64_t user, int64_t bet) {
   settle_stale_hand(ctx, guild, user);
@@ -188,15 +209,12 @@ std::string try_start(Ctx &ctx, uint64_t guild, uint64_t user, int64_t bet) {
   if (load_hand(ctx, guild, user, open))
     return "You still have a blackjack hand in progress. Finish it first.";
 
-  std::string last = ctx.db.kv_get(guild, cooldown_key(user));
-  if (!last.empty()) {
-    try {
-      int64_t ends = std::stoll(last) + kCooldownSeconds;
-      if (ends > now_s())
-        return "⏳ The casino needs a break. You can play again <t:" +
-               std::to_string(ends) + ":R>.";
-    } catch (...) {
-    }
+  const int played = games_today(ctx, guild, user);
+  if (played >= kMaxGamesPerDay) {
+    int64_t resets = (now_s() / 86400 + 1) * 86400;
+    return "🎰 You've played your " + std::to_string(kMaxGamesPerDay) +
+           " games for today. The limit resets <t:" + std::to_string(resets) +
+           ":R>.";
   }
 
   if (bet < kMinBet || bet > kMaxBet)
@@ -207,7 +225,7 @@ std::string try_start(Ctx &ctx, uint64_t guild, uint64_t user, int64_t bet) {
            tokens(ctx.db.token_balance(guild, user)) +
            ". Claim your daily tokens with /casino daily.";
 
-  ctx.db.kv_set(guild, cooldown_key(user), std::to_string(now_s()));
+  count_game(ctx, guild, user, played);
   return "";
 }
 
@@ -221,8 +239,8 @@ std::string rules_text() {
        "piss tokens, not XP, in the casino channel. `/tokens` shows a balance "
        "and `/tokens_top` the richest gamblers.\n";
   t += "Bets are " + std::to_string(kMinBet) + " to " + std::to_string(kMaxBet) +
-       " piss tokens. One game every " + std::to_string(kCooldownSeconds / 60) +
-       " minutes, whichever game you pick.\n\n";
+       " piss tokens. Up to " + std::to_string(kMaxGamesPerDay) +
+       " games per day (resets at midnight UTC), whichever games you pick.\n\n";
   t += "**Slots**: two 🍒 pays x" + std::to_string(kCherryPairMultiplier) +
        ". Three in a row pays ";
   for (int i = 0; i < kSlotSymbolCount; ++i)

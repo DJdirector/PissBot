@@ -209,6 +209,6 @@ int main() {
   test_hand_values();
   test_blackjack_payouts();
   test_blackjack_play_and_storage();
-  CHECK(kMinBet > 0 && kMaxBet >= kMinBet && kCooldownSeconds == 300);
+  CHECK(kMinBet > 0 && kMaxBet >= kMinBet && kMaxGamesPerDay == 100);
   std::cout << "casino_test passed" << std::endl;
 }

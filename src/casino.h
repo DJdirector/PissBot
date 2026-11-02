@@ -14,7 +14,7 @@ namespace casino {
 
 constexpr int kMinBet = 10;
 constexpr int kMaxBet = 200;
-constexpr int kCooldownSeconds = 5 * 60;   // between games, per player
+constexpr int kMaxGamesPerDay = 100;       // games per player per UTC day
 constexpr int kHandTimeoutSeconds = 4 * 60; // idle blackjack hand stands
 
 constexpr int kDailyTokens = 100;           // free tokens per claim
