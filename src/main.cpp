@@ -80,7 +80,7 @@ static const Feature kFeatures[] = {
     {"xp", "XP adjustments", "/add_xp, /remove_xp"},
     {"tokens", "Token adjustments", "/tokens_add, /tokens_remove, /tokens_set"},
     {"answers", "Answers (auto-replies)", "/answers"},
-    {"moderation", "Moderation", "/warn, /timeout, /kick, /ban, /purge, /modlog"},
+    {"moderation", "Moderation", "/warn, /timeout, /kick, /ban, /purge, /modlog, /timeoutrole"},
     {"welcome", "Welcome and autorole", "/welcome"},
     {"roles", "Role menus", "/rolemenu"},
 };
@@ -761,9 +761,20 @@ int main() {
     }
   });
 
+  bot.on_guild_member_update([&ctx](const dpp::guild_member_update_t &event) {
+    auto enabled = ctx.db.get_enabled_modules(event.updating_guild.id);
+    for (const auto &m : all_modules()) {
+      if (enabled.count(m->id()))
+        m->on_member_update(ctx, event);
+    }
+  });
+
   // Commands are registered per guild, only for enabled modules.
   bot.on_guild_create([&ctx](const dpp::guild_create_t &event) {
     sync_guild_commands(ctx, event.created.id);
+    // Timeouts that started or ended while the bot was offline
+    if (module_enabled(ctx.db, event.created.id, "moderation"))
+      timeout_role_scan_guild(ctx, event.created);
   });
 
   // --- Reactions: forwarded to enabled modules (casino sign-up) ---
@@ -1781,6 +1792,14 @@ int main() {
           casino_refresh_leaderboards(timer_ctx);
         },
         300);
+
+    // Take the timeout role back from members whose timeout has ended
+    bot.start_timer(
+        [&bot, &db](dpp::timer handle) {
+          Ctx timer_ctx{bot, db};
+          timeout_role_sweep(timer_ctx);
+        },
+        15);
   });
 
   bot.start(dpp::st_wait);

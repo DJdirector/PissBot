@@ -28,9 +28,12 @@ public:
   virtual bool on_select(Ctx &, const dpp::select_click_t &) { return false; }
   virtual bool on_button(Ctx &, const dpp::button_click_t &) { return false; }
   virtual bool on_form(Ctx &, const dpp::form_submit_t &) { return false; }
-  virtual bool on_message(Ctx &, const dpp::message_create_t &) { return false; }
+  virtual bool on_message(Ctx &, const dpp::message_create_t &) {
+    return false;
+  }
   virtual void on_member_join(Ctx &, const dpp::guild_member_add_t &) {}
   virtual void on_member_leave(Ctx &, const dpp::guild_member_remove_t &) {}
+  virtual void on_member_update(Ctx &, const dpp::guild_member_update_t &) {}
   virtual void on_reaction_add(Ctx &, const dpp::message_reaction_add_t &) {}
   virtual void on_reaction_remove(Ctx &,
                                   const dpp::message_reaction_remove_t &) {}
@@ -57,7 +60,8 @@ std::unique_ptr<Module> make_welcome_module();
 std::unique_ptr<Module> make_roles_module();
 std::unique_ptr<Module> make_casino_module();
 
-// ---- Casino helpers used by /setup and the 5-minute timer (modules/casino.cpp)
+// ---- Casino helpers used by /setup and the 5-minute timer
+// (modules/casino.cpp)
 
 // Remembers the channel where games are played; games only work there.
 // Posts a short welcome in it.
@@ -69,3 +73,11 @@ void casino_set_leaderboard_channel(Ctx &ctx, uint64_t guild_id,
 void casino_post_signup(Ctx &ctx, uint64_t guild_id, uint64_t channel_id);
 // Redraws the live casino leaderboard of every guild that has one.
 void casino_refresh_leaderboards(Ctx &ctx);
+
+// ---- Timeout role (modules/moderation.cpp): members who are timed out get the
+// role set with /timeoutrole, and lose it when the timeout ends.
+
+// Catch-up for timeouts that started or ended while the bot was offline.
+void timeout_role_scan_guild(Ctx &ctx, const dpp::guild &guild);
+// Removes the role from members whose timeout has ended (runs on a timer).
+void timeout_role_sweep(Ctx &ctx);

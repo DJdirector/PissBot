@@ -2,8 +2,8 @@
 #define DATABASE_H
 
 #include <cstdint>
-#include <sqlite3.h>
 #include <set>
+#include <sqlite3.h>
 #include <string>
 #include <utility>
 #include <vector>
@@ -99,6 +99,13 @@ public:
                                                       int limit = 10);
   // 1 = richest. 0 when the user has no tokens.
   int token_rank(uint64_t guild_id, uint64_t user_id);
+
+  // Members the bot gave the timeout role to (and when their timeout ends)
+  bool timeout_track(uint64_t guild_id, uint64_t user_id, int64_t until);
+  bool timeout_untrack(uint64_t guild_id, uint64_t user_id);
+  bool timeout_tracked(uint64_t guild_id, uint64_t user_id);
+  // Tracked members whose timeout has ended by `now` (guild, user)
+  std::vector<std::pair<uint64_t, uint64_t>> timeout_due(int64_t now);
 
   // Members who joined the casino by reacting to the sign-up message
   bool casino_member_add(uint64_t guild_id, uint64_t user_id, int64_t now);
