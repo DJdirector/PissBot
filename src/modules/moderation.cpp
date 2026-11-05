@@ -1,4 +1,5 @@
 #include "module.h"
+#include <algorithm>
 #include <ctime>
 #include <variant>
 
@@ -41,6 +42,88 @@ void log_action(Ctx &ctx, uint64_t guild_id, const std::string &action,
 void dm_user(Ctx &ctx, uint64_t user, const std::string &text) {
   ctx.bot.direct_message_create(
       user, dpp::message(text), [](const dpp::confirmation_callback_t &) {});
+}
+
+// ---- Timeout role ----------------------------------------------------------
+// A role (set with /timeoutrole) that sends timed-out members to a restricted
+// area. The bot gives it when a timeout starts and takes it back when it ends.
+// Only roles the bot gave are taken back, so a member who already had the role
+// for some other reason keeps it. Discord sends no event when a timeout simply
+// runs out, so the bot remembers each member it gave the role to and a timer
+// checks them.
+
+const char *kTimeoutRoleKey = "timeout_role";
+
+uint64_t timeout_role_id(Database &db, uint64_t guild) {
+  std::string v = db.kv_get(guild, kTimeoutRoleKey);
+  if (v.empty())
+    return 0;
+  try {
+    return std::stoull(v);
+  } catch (...) {
+    return 0;
+  }
+}
+
+// Takes the role back. A failure keeps the member on the list so the next
+// sweep tries again, unless they left the server or the role is gone.
+void release_member(dpp::cluster &bot, Database &db, uint64_t guild,
+                    uint64_t user, uint64_t role) {
+  bot.guild_member_remove_role(
+      guild, user, role,
+      [&bot, &db, guild, user](const dpp::confirmation_callback_t &cb) {
+        if (!cb.is_error()) {
+          db.timeout_untrack(guild, user);
+          return;
+        }
+        int code = cb.get_error().code;
+        if (code == 10007 || code == 10011) { // unknown member / unknown role
+          db.timeout_untrack(guild, user);
+          return;
+        }
+        db.timeout_track(guild, user, time(nullptr)); // retry on the next sweep
+        bot.log(dpp::ll_warning,
+                "Couldn't remove the timeout role from " + std::to_string(user) +
+                    " (" + cb.get_error().message +
+                    "). Check Manage Roles and that my role is above it.");
+      });
+}
+
+// Makes the member's role match their timeout.
+void sync_member(dpp::cluster &bot, Database &db, uint64_t guild,
+                 uint64_t user, const dpp::guild_member &m) {
+  const uint64_t role = timeout_role_id(db, guild);
+  if (role == 0 || user == uint64_t(bot.me.id))
+    return;
+  const int64_t until = static_cast<int64_t>(m.communication_disabled_until);
+  const bool timed_out = until > static_cast<int64_t>(time(nullptr));
+  const auto &roles = m.get_roles();
+  const bool has_role =
+      std::find(roles.begin(), roles.end(), dpp::snowflake(role)) != roles.end();
+  const bool tracked = db.timeout_tracked(guild, user);
+
+  if (timed_out) {
+    if (!has_role) {
+      // Remember first, so a crash can't leave the role on with nobody to take
+      // it back.
+      db.timeout_track(guild, user, until);
+      bot.guild_member_add_role(
+          guild, user, role,
+          [&bot, &db, guild, user](const dpp::confirmation_callback_t &cb) {
+            if (!cb.is_error())
+              return;
+            db.timeout_untrack(guild, user);
+            bot.log(dpp::ll_warning,
+                    "Couldn't give the timeout role to " + std::to_string(user) +
+                        " (" + cb.get_error().message +
+                        "). Check Manage Roles and that my role is above it.");
+          });
+    } else if (tracked) {
+      db.timeout_track(guild, user, until); // the timeout was changed
+    }
+  } else if (tracked) {
+    release_member(bot, db, guild, user, role);
+  }
 }
 
 class ModerationModule : public Module {
@@ -117,6 +200,12 @@ public:
                                           "Where to log actions", true)
                           .add_channel_type(dpp::CHANNEL_TEXT));
     v.push_back(modlog);
+
+    dpp::slashcommand trole("timeoutrole",
+                            "Set the role given to members while timed out", a);
+    trole.add_option(dpp::command_option(dpp::co_role, "role",
+                                         "The timeout role", true));
+    v.push_back(trole);
     return v;
   }
 
@@ -124,7 +213,7 @@ public:
     const std::string cmd = event.command.get_command_name();
     static const char *mine[] = {"warn",  "warnings", "clearwarnings", "timeout",
                                  "untimeout", "kick", "ban", "unban", "purge",
-                                 "modlog"};
+                                 "modlog", "timeoutrole"};
     bool ours = false;
     for (auto *m : mine)
       ours = ours || cmd == m;
@@ -138,6 +227,26 @@ public:
     uint64_t guild = event.command.guild_id;
     uint64_t mod = event.command.usr.id;
     Ctx *c = &ctx;
+
+    if (cmd == "timeoutrole") {
+      auto role = std::get<dpp::snowflake>(event.get_parameter("role"));
+      dpp::role *r = dpp::find_role(role);
+      if (uint64_t(role) == guild || (r && r->is_managed())) {
+        event.reply(ephemeral_text(
+            "Pick a normal role. @everyone and bot or integration roles "
+            "can't be given to members."));
+        return true;
+      }
+      ctx.db.kv_set(guild, kTimeoutRoleKey, std::to_string(uint64_t(role)));
+      // Pick up anyone who is timed out right now.
+      if (dpp::guild *g = dpp::find_guild(guild))
+        timeout_role_scan_guild(ctx, *g);
+      event.reply(ephemeral_text(
+          "Timed-out members will get <@&" + std::to_string(uint64_t(role)) +
+          "> and lose it when their timeout ends. I need Manage Roles, and my "
+          "highest role must sit above it."));
+      return true;
+    }
 
     if (cmd == "modlog") {
       auto ch = std::get<dpp::snowflake>(event.get_parameter("channel"));
@@ -330,9 +439,48 @@ public:
     }
     return true;
   }
+
+  void on_member_update(Ctx &ctx,
+                        const dpp::guild_member_update_t &event) override {
+    sync_member(ctx.bot, ctx.db, event.updating_guild.id,
+                uint64_t(event.updated.user_id), event.updated);
+  }
+
+  void on_member_leave(Ctx &ctx,
+                       const dpp::guild_member_remove_t &event) override {
+    ctx.db.timeout_untrack(event.guild_id, uint64_t(event.removed.id));
+  }
 };
 
 } // namespace
+
+void timeout_role_scan_guild(Ctx &ctx, const dpp::guild &guild) {
+  if (timeout_role_id(ctx.db, guild.id) == 0)
+    return;
+  for (const auto &[id, member] : guild.members)
+    sync_member(ctx.bot, ctx.db, guild.id, uint64_t(id), member);
+}
+
+void timeout_role_sweep(Ctx &ctx) {
+  dpp::cluster &bot = ctx.bot;
+  Database &db = ctx.db;
+  for (const auto &[guild, user] : db.timeout_due(time(nullptr))) {
+    if (!module_enabled(db, guild, "moderation"))
+      continue;
+    // Ask Discord for the member's real state: the timeout may have been
+    // extended while the bot was offline.
+    bot.guild_get_member(
+        guild, user,
+        [&bot, &db, guild, user](const dpp::confirmation_callback_t &cb) {
+          if (cb.is_error()) {
+            if (cb.get_error().code == 10007) // they left the server
+              db.timeout_untrack(guild, user);
+            return;
+          }
+          sync_member(bot, db, guild, user, std::get<dpp::guild_member>(cb.value));
+        });
+  }
+}
 
 std::unique_ptr<Module> make_moderation_module() {
   return std::make_unique<ModerationModule>();

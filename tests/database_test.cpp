@@ -2,7 +2,8 @@
 #include "database.h"
 
 static YouTubeSub make_sub(uint64_t guild, const std::string &id,
-                           const std::string &video, const std::string &stream) {
+                           const std::string &video,
+                           const std::string &stream) {
   YouTubeSub s;
   s.guild_id = guild;
   s.yt_channel_id = id;
@@ -57,12 +58,14 @@ int main() {
     // daily claim: pays once, then not until the cooldown has passed
     CHECK(db.token_last_daily(1, 20) == 0);
     CHECK(db.token_claim_daily(1, 20, 100, 1000000, 86400));
-    CHECK(db.token_balance(1, 20) == 100 && db.token_last_daily(1, 20) == 1000000);
+    CHECK(db.token_balance(1, 20) == 100 &&
+          db.token_last_daily(1, 20) == 1000000);
     CHECK(!db.token_claim_daily(1, 20, 100, 1000000 + 86399, 86400));
     CHECK(db.token_balance(1, 20) == 100);
     CHECK(db.token_claim_daily(1, 20, 100, 1000000 + 86400, 86400));
     CHECK(db.token_balance(1, 20) == 200);
-    CHECK(db.token_add(1, 30, 5) && db.token_claim_daily(1, 30, 100, 2000000000, 86400));
+    CHECK(db.token_add(1, 30, 5) &&
+          db.token_claim_daily(1, 30, 100, 2000000000, 86400));
     CHECK(db.token_balance(1, 30) == 105); // claim works on an existing row
 
     // ---- token admin helpers, leaderboard and casino members ----
@@ -85,8 +88,21 @@ int main() {
     CHECK(db.token_rank(1, 20) == 1 && db.token_rank(1, 30) == 2);
     CHECK(db.token_rank(1, 41) == 0 && db.token_rank(2, 20) == 0);
 
+    // ---- timeout role tracking ----
+    CHECK(!db.timeout_tracked(1, 50));
+    CHECK(db.timeout_track(1, 50, 1000) && db.timeout_tracked(1, 50));
+    CHECK(db.timeout_track(1, 51, 5000) && db.timeout_track(2, 50, 1000));
+    CHECK(db.timeout_due(999).empty());
+    CHECK(db.timeout_due(1000).size() == 2); // (1,50) and (2,50)
+    CHECK(db.timeout_track(1, 50, 9000));    // extended: no longer due
+    CHECK(db.timeout_due(1000).size() == 1);
+    CHECK(db.timeout_due(5000).size() == 2); // (2,50) and (1,51)
+    CHECK(db.timeout_untrack(1, 50) && !db.timeout_untrack(1, 50));
+    CHECK(!db.timeout_tracked(1, 50) && db.timeout_tracked(2, 50));
+
     CHECK(db.casino_member_count(1) == 0);
-    CHECK(db.casino_member_add(1, 20, 1000) && db.casino_member_add(1, 30, 1001));
+    CHECK(db.casino_member_add(1, 20, 1000) &&
+          db.casino_member_add(1, 30, 1001));
     CHECK(db.casino_member_add(1, 20, 2000)); // joining twice is harmless
     CHECK(db.casino_member_count(1) == 2 && db.casino_member_count(2) == 0);
     CHECK(db.casino_member_remove(1, 20) && !db.casino_member_remove(1, 20));
@@ -144,14 +160,16 @@ int main() {
     auto answers = db.get_answers(1);
     CHECK(answers.size() == 2 && !answers[0].contains && answers[1].contains);
     CHECK(db.set_answer(1, "hi", "updated", true)); // upsert
-    CHECK(db.get_answers(1)[0].response == "updated" && db.get_answers(1)[0].contains);
+    CHECK(db.get_answers(1)[0].response == "updated" &&
+          db.get_answers(1)[0].contains);
     CHECK(db.remove_answer(1, "hi") && !db.remove_answer(1, "hi"));
     CHECK(db.get_answers(2).size() == 1);
 
     // ---- modules ----
     CHECK(db.get_enabled_modules(1).empty());
     CHECK(db.set_enabled_modules(1, {"levels", "social", "levels"}));
-    CHECK((db.get_enabled_modules(1) == std::set<std::string>{"levels", "social"}));
+    CHECK((db.get_enabled_modules(1) ==
+           std::set<std::string>{"levels", "social"}));
     CHECK(db.set_enabled_modules(1, {"answers"}));
     CHECK((db.get_enabled_modules(1) == std::set<std::string>{"answers"}));
     CHECK(db.get_enabled_modules(2).empty());
@@ -180,12 +198,14 @@ int main() {
     CHECK(db.clear_warnings(1, 10) == 2 && db.get_warnings(1, 10).empty());
     CHECK(db.get_warnings(1, 11).size() == 1);
 
-    // ---- YouTube subscriptions with old-style placeholders (pre-migration) ----
-    CHECK(db.add_youtube_channel(make_sub(
-        3, "UCaaaaaaaaaaaaaaaaaaaaaa", "{role} new video {url}",
-        "{role} {channel} is live {url}")));
+    // ---- YouTube subscriptions with old-style placeholders (pre-migration)
+    // ----
+    CHECK(db.add_youtube_channel(make_sub(3, "UCaaaaaaaaaaaaaaaaaaaaaa",
+                                          "{role} new video {url}",
+                                          "{role} {channel} is live {url}")));
     CHECK(db.set_custom_command(3, "old", "{user} said {args} in {channel}"));
-    CHECK(db.set_answer(3, "yo", "hey {user} ({username}) in {channel}", false));
+    CHECK(
+        db.set_answer(3, "yo", "hey {user} ({username}) in {channel}", false));
   }
 
   // Re-open the same file: init() runs migrations that rewrite {x} to $(x).
