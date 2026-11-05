@@ -1,0 +1,38 @@
+name: Sync Wiki Submodule
+
+on:
+  gollum: # This triggers specifically when a GitHub Wiki page is created or updated
+
+jobs:
+  update-submodule:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Allows the workflow to push the updated submodule pointer back to main
+
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: true
+          fetch-depth: 0
+
+      - name: Update Wiki submodule to latest commit
+        run: |
+          git submodule update --remote --merge docs/wiki
+
+      - name: Commit and push changes if updated
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@://github.com"
+          
+          # Check if the submodule pointer actually changed
+          if ! git diff --exit-code docs/wiki; then
+            git add docs/wiki
+            git commit -m "chore: auto-update wiki submodule pointer [skip ci]"
+            git push origin main
+            echo "Submodule updated successfully."
+          else
+            echo "No wiki changes to update in the main repo."
+          fi
+
