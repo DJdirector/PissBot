@@ -45,6 +45,7 @@ bool Database::init() {
                                "ping_role_id TEXT, "
                                "ignore_shorts INTEGER DEFAULT 0, "
                                "use_embed INTEGER DEFAULT 0, "
+                               "channel_name TEXT DEFAULT '', "
                                "PRIMARY KEY (guild_id, yt_channel_id)"
                                ");";
 
@@ -173,6 +174,10 @@ void Database::run_migrations() {
   if (!table_has_column(db, "youtube_subs", "use_embed")) {
     execute_query(
         "ALTER TABLE youtube_subs ADD COLUMN use_embed INTEGER DEFAULT 0;");
+  }
+  if (!table_has_column(db, "youtube_subs", "channel_name")) {
+    execute_query(
+        "ALTER TABLE youtube_subs ADD COLUMN channel_name TEXT DEFAULT '';");
   }
   if (!table_has_column(db, "guild_settings", "xp_leaderboard_channel_id")) {
     execute_query("ALTER TABLE guild_settings ADD COLUMN "
@@ -331,7 +336,8 @@ Database::get_guild_youtube_subscriptions(uint64_t guild_id) {
   sqlite3_stmt *stmt;
   std::string sql =
       "SELECT yt_channel_id, video_message, stream_message, ping_role_id, "
-      "ignore_shorts, use_embed FROM youtube_subs WHERE guild_id = ?;";
+      "ignore_shorts, use_embed, channel_name FROM youtube_subs "
+      "WHERE guild_id = ?;";
 
   if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
     sqlite3_bind_int64(stmt, 1, guild_id);
@@ -350,6 +356,8 @@ Database::get_guild_youtube_subscriptions(uint64_t guild_id) {
 
       sub.ignore_shorts = sqlite3_column_int(stmt, 4) != 0;
       sub.use_embed = sqlite3_column_int(stmt, 5) != 0;
+      const unsigned char *name = sqlite3_column_text(stmt, 6);
+      sub.channel_name = name ? reinterpret_cast<const char *>(name) : "";
       list.push_back(sub);
     }
   }
@@ -362,7 +370,8 @@ std::vector<YouTubeSub> Database::get_all_youtube_subscriptions() {
   sqlite3_stmt *stmt;
   std::string sql =
       "SELECT guild_id, yt_channel_id, video_message, stream_message, "
-      "ping_role_id, ignore_shorts, use_embed FROM youtube_subs;";
+      "ping_role_id, ignore_shorts, use_embed, channel_name "
+      "FROM youtube_subs;";
 
   if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -380,11 +389,29 @@ std::vector<YouTubeSub> Database::get_all_youtube_subscriptions() {
 
       sub.ignore_shorts = sqlite3_column_int(stmt, 5) != 0;
       sub.use_embed = sqlite3_column_int(stmt, 6) != 0;
+      const unsigned char *name = sqlite3_column_text(stmt, 7);
+      sub.channel_name = name ? reinterpret_cast<const char *>(name) : "";
       list.push_back(sub);
     }
   }
   sqlite3_finalize(stmt);
   return list;
+}
+
+bool Database::set_youtube_channel_name(const std::string &yt_channel_id,
+                                        const std::string &name) {
+  sqlite3_stmt *stmt = nullptr;
+  const char *sql =
+      "UPDATE youtube_subs SET channel_name = ? "
+      "WHERE yt_channel_id = ? AND IFNULL(channel_name, '') != ?;";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+    return false;
+  sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, yt_channel_id.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, name.c_str(), -1, SQLITE_TRANSIENT);
+  bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+  sqlite3_finalize(stmt);
+  return ok;
 }
 
 std::string Database::get_last_posted_video(const std::string &yt_channel_id) {

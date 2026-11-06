@@ -88,6 +88,27 @@ int main() {
     CHECK(db.token_rank(1, 20) == 1 && db.token_rank(1, 30) == 2);
     CHECK(db.token_rank(1, 41) == 0 && db.token_rank(2, 20) == 0);
 
+    // ---- YouTube channel names ----
+    {
+      YouTubeSub a{1, "UC_aaaaaaaaaaaaaaaaaaaaaa", "v", "s", "", false, false,
+                   ""};
+      YouTubeSub b{2, "UC_aaaaaaaaaaaaaaaaaaaaaa", "v", "s", "", false, false,
+                   ""};
+      CHECK(db.add_youtube_channel(a) && db.add_youtube_channel(b));
+      CHECK(db.get_guild_youtube_subscriptions(1).at(0).channel_name.empty());
+      CHECK(db.set_youtube_channel_name("UC_aaaaaaaaaaaaaaaaaaaaaa",
+                                        "Cool & Co"));
+      CHECK(db.get_guild_youtube_subscriptions(1).at(0).channel_name ==
+            "Cool & Co");
+      CHECK(db.get_guild_youtube_subscriptions(2).at(0).channel_name ==
+            "Cool & Co");
+      // Re-adding a channel keeps its stored name
+      CHECK(db.add_youtube_channel(a));
+      CHECK(db.get_guild_youtube_subscriptions(1).at(0).channel_name ==
+            "Cool & Co");
+      CHECK(db.get_all_youtube_subscriptions().size() == 2);
+    }
+
     // ---- timeout role tracking ----
     CHECK(!db.timeout_tracked(1, 50));
     CHECK(db.timeout_track(1, 50, 1000) && db.timeout_tracked(1, 50));

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <dpp/dpp.h>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -351,6 +352,44 @@ std::string extract_channel_id(const std::string &input) {
   return "";
 }
 
+// The channel name in a YouTube feed: the author's <name>, which comes before
+// the first <entry>.
+static std::string feed_channel_name(const std::string &xml) {
+  size_t entry = xml.find("<entry>");
+  size_t start = xml.find("<name>");
+  if (start == std::string::npos ||
+      (entry != std::string::npos && start > entry))
+    return "";
+  start += 6;
+  size_t end = xml.find("</name>", start);
+  if (end == std::string::npos)
+    return "";
+  return xml_unescape(xml.substr(start, end - start));
+}
+
+// Looks the channel's name up from its feed and stores it. `done` runs
+// afterwards whether or not a name was found.
+static void fetch_channel_name(dpp::cluster &bot, Database &db,
+                               const std::string &yt_id,
+                               std::function<void()> done = nullptr) {
+  bot.request("https://www.youtube.com/feeds/videos.xml?channel_id=" + yt_id,
+              dpp::m_get,
+              [&db, yt_id, done](const dpp::http_request_completion_t &resp) {
+                if (resp.status == 200) {
+                  std::string name = feed_channel_name(resp.body);
+                  if (!name.empty())
+                    db.set_youtube_channel_name(yt_id, name);
+                }
+                if (done)
+                  done();
+              });
+}
+
+// What the dashboard calls a channel: its name, or the ID until it is known.
+static std::string channel_label(const YouTubeSub &sub) {
+  return sub.channel_name.empty() ? sub.yt_channel_id : sub.channel_name;
+}
+
 bool find_sub(Database &db, uint64_t guild_id, const std::string &yt_id,
               YouTubeSub &out) {
   for (const auto &sub : db.get_guild_youtube_subscriptions(guild_id)) {
@@ -396,8 +435,11 @@ dpp::message youtube_list_view(Database &db, uint64_t guild_id,
           std::string("Role: ") + (sub.ping_role_id.empty() ? "none" : "set") +
           " | Shorts filter: " + (sub.ignore_shorts ? "on" : "off") +
           " | Embeds: " + (sub.use_embed ? "on" : "off");
-      pick.add_select_option(
-          dpp::select_option(sub.yt_channel_id, sub.yt_channel_id, desc));
+      if (!sub.channel_name.empty())
+        desc = sub.yt_channel_id + " | " + desc;
+      pick.add_select_option(dpp::select_option(
+          dpp::utility::utf8substr(channel_label(sub), 0, 100),
+          sub.yt_channel_id, dpp::utility::utf8substr(desc, 0, 100)));
     }
     msg.add_component(dpp::component().add_component(pick));
   }
@@ -424,7 +466,10 @@ dpp::message youtube_detail_view(Database &db, uint64_t guild_id,
   std::string text;
   if (!notice.empty())
     text += notice + "\n\n";
-  text += "**Configuring YouTube channel** `" + yt_id + "`\n";
+  text += "**Configuring YouTube channel** " +
+          (sub.channel_name.empty() ? "`" + yt_id + "`"
+                                    : sub.channel_name + " (`" + yt_id + "`)") +
+          "\n";
   text += "Ping role: " +
           (sub.ping_role_id.empty()
                ? std::string("none (uses @everyone)")
@@ -1511,6 +1556,16 @@ int main() {
       }
       event.reply(dpp::ir_update_message,
                   youtube_detail_view(db, guild_id, yt_id, notice));
+      // Show the channel's name as soon as it is known
+      YouTubeSub named;
+      if (find_sub(db, guild_id, yt_id, named) && named.channel_name.empty()) {
+        fetch_channel_name(bot, db, yt_id, [&db, event, guild_id, yt_id, notice] {
+          YouTubeSub now;
+          if (find_sub(db, guild_id, yt_id, now) && !now.channel_name.empty())
+            event.edit_original_response(
+                youtube_detail_view(db, guild_id, yt_id, notice));
+        });
+      }
     } else if (event.custom_id.rfind("yt_modal_msg:", 0) == 0) {
       std::string yt_id = event.custom_id.substr(13);
       std::string vid_msg = field("input_video_msg");
@@ -1550,6 +1605,17 @@ int main() {
     // on_guild_create). Remove the old global command set once.
     bot.global_bulk_command_create({});
 
+    // Channels tracked before names were stored: look the names up once
+    {
+      std::set<std::string> missing;
+      for (const auto &sub : db.get_all_youtube_subscriptions()) {
+        if (sub.channel_name.empty())
+          missing.insert(sub.yt_channel_id);
+      }
+      for (const auto &yt_id : missing)
+        fetch_channel_name(bot, db, yt_id);
+    }
+
     // 5-minute background RSS timer
     bot.start_timer(
         [&bot, &db](dpp::timer handle) {
@@ -1574,6 +1640,10 @@ int main() {
                     return;
 
                   const std::string &xml = response.body;
+                  // Keeps the dashboard's channel names current
+                  std::string feed_name = feed_channel_name(xml);
+                  if (!feed_name.empty())
+                    db.set_youtube_channel_name(sub.yt_channel_id, feed_name);
                   size_t entry_pos = xml.find("<entry>");
                   if (entry_pos == std::string::npos)
                     return;
@@ -1620,8 +1690,8 @@ int main() {
                       name_start += 6;
                       size_t name_end = xml.find("</name>", name_start);
                       if (name_end != std::string::npos) {
-                        channel_name =
-                            xml.substr(name_start, name_end - name_start);
+                        channel_name = xml_unescape(
+                            xml.substr(name_start, name_end - name_start));
                       }
                     }
 
