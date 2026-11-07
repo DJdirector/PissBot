@@ -16,6 +16,7 @@ struct YouTubeSub {
   std::string ping_role_id;
   bool ignore_shorts;
   bool use_embed;
+  std::string channel_name; // "" until looked up from the feed
 };
 
 struct WarningEntry {
@@ -53,6 +54,9 @@ public:
                               const std::string &yt_channel_id);
   std::vector<YouTubeSub> get_guild_youtube_subscriptions(uint64_t guild_id);
   std::vector<YouTubeSub> get_all_youtube_subscriptions();
+  // The name is the same for every server tracking the channel.
+  bool set_youtube_channel_name(const std::string &yt_channel_id,
+                                const std::string &name);
 
   // YouTube Video Cache
   std::string get_last_posted_video(const std::string &yt_channel_id);
