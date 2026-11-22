@@ -104,6 +104,14 @@ public:
   // 1 = richest. 0 when the user has no tokens.
   int token_rank(uint64_t guild_id, uint64_t user_id);
 
+  // Members the bot is "bothering" with a reaction on every message they send
+  bool bother_set(uint64_t guild_id, uint64_t user_id, const std::string &emoji,
+                  int64_t until);
+  bool bother_clear(uint64_t guild_id, uint64_t user_id);
+  // The emoji to react with, or "" when the member isn't being bothered (or
+  // the time is up, which also removes the entry).
+  std::string bother_emoji(uint64_t guild_id, uint64_t user_id, int64_t now);
+
   // Members the bot gave the timeout role to (and when their timeout ends)
   bool timeout_track(uint64_t guild_id, uint64_t user_id, int64_t until);
   bool timeout_untrack(uint64_t guild_id, uint64_t user_id);
