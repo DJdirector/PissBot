@@ -11,6 +11,7 @@ const std::vector<std::unique_ptr<Module>> &all_modules() {
     v.push_back(make_welcome_module());
     v.push_back(make_roles_module());
     v.push_back(make_casino_module());
+    v.push_back(make_misc_module());
     return v;
   }();
   return modules;

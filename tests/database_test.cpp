@@ -109,6 +109,18 @@ int main() {
       CHECK(db.get_all_youtube_subscriptions().size() == 2);
     }
 
+    // ---- bothering ----
+    CHECK(db.bother_emoji(1, 60, 100).empty());
+    CHECK(db.bother_set(1, 60, "💩", 1000));
+    CHECK(db.bother_emoji(1, 60, 999) == "💩");
+    CHECK(db.bother_emoji(2, 60, 999).empty());   // other guilds are separate
+    CHECK(db.bother_set(1, 60, "pog:123", 2000)); // replaces the emoji
+    CHECK(db.bother_emoji(1, 60, 1500) == "pog:123");
+    CHECK(db.bother_emoji(1, 60, 2000).empty()); // time is up
+    CHECK(!db.bother_clear(1, 60));              // ...and it was removed
+    CHECK(db.bother_set(1, 61, "😀", 5000) && db.bother_clear(1, 61));
+    CHECK(db.bother_emoji(1, 61, 100).empty());
+
     // ---- timeout role tracking ----
     CHECK(!db.timeout_tracked(1, 50));
     CHECK(db.timeout_track(1, 50, 1000) && db.timeout_tracked(1, 50));

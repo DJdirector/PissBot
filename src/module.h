@@ -59,6 +59,7 @@ std::unique_ptr<Module> make_moderation_module();
 std::unique_ptr<Module> make_welcome_module();
 std::unique_ptr<Module> make_roles_module();
 std::unique_ptr<Module> make_casino_module();
+std::unique_ptr<Module> make_misc_module();
 
 // ---- Casino helpers used by /setup and the 5-minute timer
 // (modules/casino.cpp)

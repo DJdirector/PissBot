@@ -84,6 +84,7 @@ static const Feature kFeatures[] = {
     {"moderation", "Moderation", "/warn, /timeout, /kick, /ban, /purge, /modlog, /timeoutrole"},
     {"welcome", "Welcome and autorole", "/welcome"},
     {"roles", "Role menus", "/rolemenu"},
+    {"misc", "Misc (pranks)", "/say, /bother, /unbother, /fakeban"},
 };
 
 static const Feature *find_feature(const std::string &key) {
